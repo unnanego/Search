@@ -112,6 +112,16 @@ Each phase ends with a build someone can use every day for what it covers.
 
 **Phase 1 — A browser.** Window with a custom title bar; tab column and strip (`⇧⌘S` → Ctrl+Shift+S); omnibox with history completion; lazy tabs plus session restore; back/forward/reload; keyboard map; Find; private tab; light/dark; minimal Settings; `Store` isolation and test world; Bench socket with `open/wait/text/shot/click/probe/close`, so the Python harness runs from day one.
 
+*Phase 1 status (2026-11-21): built.* `python test/phase1.py` runs 40 checks against the dev build in its own test world and passes; with `--keys` it also sends real key presses from a focused page. Core has 129 unit tests. What it taught us:
+- **The bench is a named pipe**, `\\.\pipe\<store folder name>\bench`, not an AF_UNIX socket file. On this Windows build a socket file left behind by a closed socket could be neither deleted nor bound again for a long while, which a fixed path can't survive. The wire protocol is unchanged. `test/winbench.py` is the Windows client, and porting `./bench` itself means swapping its transport. Test runs also have the Mac's test-only verbs `press`, `type` and `select`.
+- **WinUI hands a focused page's keys to nobody.** A WebView2's keyboard lives in its own process, and WinUI's control exposes no accelerator hook. Each page therefore gets a listener at document start that passes the window's keys, and only those, to the window: real presses only (`isTrusted`), carrying a per-launch secret held in a closure. Pages where scripts don't run, such as the built-in PDF viewer and error pages, don't pass keys yet.
+- **WebView2's own browser shortcuts are off** (`AreBrowserAcceleratorKeysEnabled = false`): left on, Ctrl+S opened Save As and those keys never reached the window. Print (Ctrl+P) is handled by the window. **Zoom is missing**: WinUI's WebView2 doesn't expose the zoom factor. Getting it means hosting the controller ourselves or using a DevTools workaround; decide in Phase 2.
+- **Shortcuts that clash on Windows:**
+  - Duplicate is Ctrl+Shift+K, as in Chrome and Edge, keeping Ctrl+D for bookmarks.
+  - Reload from origin is Ctrl+Shift+R or Ctrl+F5.
+  - Reading mode will need a key other than the Mac's ⇧⌘R (F9, as in Edge).
+- **Restored tabs start asleep**: no web view until shown, as the plan wanted, and a new empty tab gets none until it has an address. When the tab in front is private, the session marks the nearest kept tab as in front instead.
+
 **Phase 2 — Daily driver.** Shield; Curtain (hide elements) and site styles; reading mode; bookmarks, history, and downloads panels; passwords (save after a successful sign-in, offer under the field) and passkeys; site card with permissions; notifications; default-browser registration and links from other apps; Velopack updater and a signed installer. **First outside build here.**
 
 **Phase 3 — The Arc layer.** Spaces (colours, gradients, routes, swipe); pins and pin folders; tab groups; Split View (up to 4); peek; the little window; Ctrl+Tab switcher; fold; side panel; sleep and archive; floating video.

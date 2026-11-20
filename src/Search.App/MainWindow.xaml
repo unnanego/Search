@@ -3,15 +3,109 @@
     x:Class="Search.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:core="using:Search.Core"
+    xmlns:local="using:Search.App"
     Title="Search">
-    <!-- Placeholder until Phase 1: a column for the tabs, and the page. -->
-    <Grid>
+    <!-- A row of tabs, down the left or across the top, one field, and the page. -->
+    <Grid x:Name="Root" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition x:Name="TopRow" Height="40" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="220" />
+            <ColumnDefinition x:Name="ColumnDef" Width="240" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
-        <Grid x:Name="Column" Grid.Column="0" />
-        <controls:WebView2 x:Name="Page" Grid.Column="1" />
+
+        <!-- The title bar: empty, draggable. In strip mode the tabs sit in it, left of the drag space. -->
+        <Grid x:Name="TopBar" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="StripDef" Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="140" />
+            </Grid.ColumnDefinitions>
+            <ListView x:Name="Strip" Grid.Column="0" Visibility="Collapsed" SelectionMode="Single" Height="36" Margin="8,2,0,2"
+                      CanReorderItems="True" AllowDrop="True" CanDragItems="True" ScrollViewer.HorizontalScrollMode="Enabled"
+                      ScrollViewer.HorizontalScrollBarVisibility="Hidden" ScrollViewer.VerticalScrollMode="Disabled">
+                <ListView.ItemsPanel>
+                    <ItemsPanelTemplate><ItemsStackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ListView.ItemsPanel>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="core:Tab">
+                        <Grid Width="180" Height="30" ColumnSpacing="6">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Image Width="16" Height="16" Source="{x:Bind local:Icons.Of(Icon), Mode=OneWay}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Shown, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="10" Padding="4" Background="Transparent" BorderThickness="0" Click="OnCloseTabClick" Tag="{x:Bind}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <Border x:Name="DragSpace" Grid.Column="1" Background="Transparent" />
+        </Grid>
+
+        <!-- The column: the field, then the tabs. -->
+        <Grid x:Name="Column" Grid.Row="1" Grid.Column="0" Padding="8,0,4,8" RowSpacing="8">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Border x:Name="ColumnFieldSlot" Grid.Row="0">
+                <Grid x:Name="Field" RowSpacing="4">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <TextBox x:Name="FieldText" PlaceholderText="Search or enter an address" IsSpellCheckEnabled="False" />
+                    <ListView x:Name="Offers" Grid.Row="1" Visibility="Collapsed" SelectionMode="Single" IsItemClickEnabled="True" MaxHeight="360"
+                              Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" CornerRadius="8">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:Offer">
+                                <Grid ColumnSpacing="10" Padding="0,6">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{x:Bind Detail}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+            <ListView x:Name="Row" Grid.Row="1" SelectionMode="Single" CanReorderItems="True" AllowDrop="True" CanDragItems="True">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="core:Tab">
+                        <Grid Height="34" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Image Width="16" Height="16" Source="{x:Bind local:Icons.Of(Icon), Mode=OneWay}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Shown, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="10" Padding="4" Background="Transparent" BorderThickness="0" Click="OnCloseTabClick" Tag="{x:Bind}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <Button Grid.Row="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Click="OnNewTabClick">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE710;" FontSize="12" />
+                    <TextBlock Text="New Tab" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- The page, as a card. -->
+        <Border x:Name="Card" Grid.Row="1" Grid.Column="1" Margin="4,0,8,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <Grid x:Name="Stage" />
+        </Border>
+
+        <!-- The field: in the column, or floating over the page when the tabs are across the top. -->
+        <Grid x:Name="FieldHost" Grid.Row="1" Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Center" Width="640" Margin="0,48,0,0" Visibility="Collapsed" />
+
+        <!-- Find on the page. -->
+        <Border x:Name="FindBar" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,20,0" Padding="8,4"
+                CornerRadius="8" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBox x:Name="FindText" Width="220" PlaceholderText="Find on page" />
+                <TextBlock x:Name="FindCount" VerticalAlignment="Center" MinWidth="48" />
+                <Button Content="&#xE70E;" FontFamily="Segoe Fluent Icons" Click="OnFindPrevious" />
+                <Button Content="&#xE70D;" FontFamily="Segoe Fluent Icons" Click="OnFindNext" />
+                <Button Content="&#xE711;" FontFamily="Segoe Fluent Icons" Click="OnFindClose" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>
