@@ -1,0 +1,12 @@
+<Project>
+  <!-- Shared by every .NET project in the Windows rewrite (src/, test/, spikes/). The Swift app beside it is untouched. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <WindowsTfm>net11.0-windows10.0.22621.0</WindowsTfm>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

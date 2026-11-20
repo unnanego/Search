@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Spike Probe",
+  "version": "1",
+  "description": "Asks every Chrome API whether it answers inside WebView2.",
+  "background": { "service_worker": "worker.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Probe" },
+  "side_panel": { "default_path": "popup.html" },
+  "content_scripts": [{ "matches": ["http://probe.test/probe.html*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "permissions": ["tabs", "storage", "declarativeNetRequest", "scripting", "cookies", "alarms", "contextMenus", "notifications",
+    "offscreen", "identity", "bookmarks", "history", "downloads", "tabGroups", "webNavigation", "sidePanel", "sessions",
+    "topSites", "privacy", "proxy", "webRequest", "idle", "fontSettings", "tts", "management", "userScripts", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"]
+}

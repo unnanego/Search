@@ -13,3 +13,11 @@ __pycache__/
 *.provisionprofile
 *.p12
 *.mobileprovision
+
+# The Windows rewrite (.NET): build output and IDE state.
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+spikes/results/

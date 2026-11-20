@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The model, with no window and no engine: tabs, spaces, pins, session, history, bookmarks, sync merge, omnibox. -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Search.Core.Tests" />
+  </ItemGroup>
+</Project>
