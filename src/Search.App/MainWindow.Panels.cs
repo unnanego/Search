@@ -9,7 +9,7 @@ using Windows.System;
 
 namespace Search.App;
 
-public enum PanelKind { None, History, Downloads, Bookmarks, Passwords, Hidden }
+public enum PanelKind { None, History, Downloads, Bookmarks, Passwords, Hidden, Archive }
 
 // The panels (Plate.swift, Recall.swift, Loot.swift, Bookmarks.swift's panel): one shape for all of them, over the
 // page's right side, each searchable and a key away — Ctrl+H, Ctrl+J, Ctrl+Shift+O — and put away with Esc.
@@ -41,7 +41,7 @@ public sealed partial class MainWindow
     private void OpenPanel(PanelKind kind)
     {
         _panel = kind;
-        PanelTitle.Text = kind switch { PanelKind.History => "History", PanelKind.Downloads => "Downloads", PanelKind.Passwords => "Passwords", PanelKind.Hidden => "Hidden on this site", _ => "Bookmarks" };
+        PanelTitle.Text = kind switch { PanelKind.History => "History", PanelKind.Downloads => "Downloads", PanelKind.Passwords => "Passwords", PanelKind.Hidden => "Hidden on this site", PanelKind.Archive => "Archived tabs", _ => "Bookmarks" };
         PanelSearch.Text = "";
         Panel.Visibility = Visibility.Visible;
         FillPanel();
@@ -69,7 +69,7 @@ public sealed partial class MainWindow
                 {
                     Item = t, Glyph = "", Title = t.Title.Length > 0 ? t.Title : t.Address, Detail = $"{t.Address} · {When(t.Last)}", ActionGlyph = "", ActionName = "Forget"
                 }).ToList();
-                foot = ("Clear history…", true);
+                foot = ("Archived tabs", true);
                 break;
             case PanelKind.Downloads:
                 rows = _fetches.Where(f => words.Length == 0 || f.Title.Contains(words, StringComparison.OrdinalIgnoreCase)).Cast<PanelRow>().ToList();
@@ -82,6 +82,9 @@ public sealed partial class MainWindow
             case PanelKind.Passwords:
                 rows = PasswordRows(words);
                 break;
+            case PanelKind.Archive:
+                rows = ArchiveRows(words);
+                break;
             case PanelKind.Hidden:
                 rows = HiddenRows(words);
                 foot = ("Put everything back", rows.Count > 0);
@@ -91,7 +94,7 @@ public sealed partial class MainWindow
                 break;
         }
         PanelRows.ItemsSource = rows;
-        PanelEmpty.Text = rows.Count > 0 ? "" : words.Length > 0 ? "Nothing matches." : _panel switch { PanelKind.History => "Nowhere yet.", PanelKind.Downloads => "Nothing downloaded yet.", PanelKind.Passwords => "No passwords kept yet.", PanelKind.Hidden => "Nothing hidden on this site.", _ => "No bookmarks yet." };
+        PanelEmpty.Text = rows.Count > 0 ? "" : words.Length > 0 ? "Nothing matches." : _panel switch { PanelKind.History => "Nowhere yet.", PanelKind.Downloads => "Nothing downloaded yet.", PanelKind.Passwords => "No passwords kept yet.", PanelKind.Hidden => "Nothing hidden on this site.", PanelKind.Archive => "No tab has closed by itself.", _ => "No bookmarks yet." };
         PanelFoot.Content = foot.Label;
         PanelFoot.Visibility = foot.Shown ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -111,6 +114,7 @@ public sealed partial class MainWindow
             case Trace trace: Go(trace.Url, newTab: false); break;
             case Account account: _ = CopyPassword(account); break;
             case Veil veil: RestoreVeil(veil); break;
+            case Archived archived: Unarchive(archived); FillPanel(); break;
             case Keep { StillThere: true } kept: Open(kept.Path); break;
             case null when row is Fetch { State: CoreWebView2DownloadState.Completed } fetch: Open(fetch.Path); break;
             default: TakeBookmarkRow(row); break;
@@ -125,6 +129,7 @@ public sealed partial class MainWindow
             case { Item: Trace trace }: _history.Forget(trace.Key); FillPanel(); break;
             case { Item: Account account }: _ = ForgetPassword(account); break;
             case { Item: Veil veil }: RestoreVeil(veil); break;
+            case { Item: Archived archived }: _archive.Remove(archived.Id); FillPanel(); break;
             case { Item: Keep { StillThere: true } kept }: ShowInFolder(kept.Path); break;
             case { Item: Keep kept }: _downloads.Forget(kept); FillPanel(); break;
             case Fetch { State: CoreWebView2DownloadState.InProgress } fetch: fetch.Operation.Cancel(); break;
@@ -137,6 +142,7 @@ public sealed partial class MainWindow
     {
         if (_panel == PanelKind.Downloads) { Open(_fetches.FirstOrDefault() is { } last ? Path.GetDirectoryName(last.Path)! : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "\\Downloads"); return; }
         if (_panel == PanelKind.Hidden) { RestoreAllVeils(); return; }
+        if (_panel == PanelKind.History) { OpenPanel(PanelKind.Archive); return; }
         if (_panel != PanelKind.History) return;
         var sure = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Clear history?", Content = "Every place you've been is forgotten. Open tabs, bookmarks and passwords stay.", PrimaryButtonText = "Clear", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
         if (await sure.ShowAsync() == ContentDialogResult.Primary) { _history.Forget(); FillPanel(); }

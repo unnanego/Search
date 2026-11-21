@@ -8,7 +8,7 @@ namespace Search.App;
 // folders, the field offering them as you type, and the file every browser imports and exports.
 public sealed partial class MainWindow
 {
-    private readonly Bookmarks _bookmarks = new();
+    private readonly Bookmarks _bookmarks = new(settings: App.Notes);
 
     private void WireBookmarks() => _bookmarks.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(() => { if (_panel == PanelKind.Bookmarks) FillPanel(); });
 

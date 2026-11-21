@@ -18,7 +18,7 @@ def check(name, ok, detail=""):
     print(("ok   " if ok else "FAIL ") + name + (f"  ({detail})" if detail and not ok else ""))
     if not ok: failures.append(name)
 
-app = App("phase2", settings={"siteStyles": True}, hosts=["doubleclick.net", "*.doubleclick.net"], files={"styles.json": json.dumps({"127.0.0.1": "#styled { color: rgb(255, 0, 0) !important; }"})})
+app = App("phase2", settings={"siteStyles": True, "littleLinks": False}, hosts=["doubleclick.net", "*.doubleclick.net"], files={"styles.json": json.dumps({"127.0.0.1": "#styled { color: rgb(255, 0, 0) !important; }"})})
 port = app.server.server_port
 app.pages.update({
     "/ads": f"<title>Ads</title><img id=tracker src='http://ad.doubleclick.net:{port}/img.gif'><img id=own src='/img.gif'><ins class=adsbygoogle id=slot>slot</ins><div class=ad id=plain>plain</div>",

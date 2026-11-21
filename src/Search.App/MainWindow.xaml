@@ -46,7 +46,7 @@
 
         <!-- The column: the field, then the tabs. -->
         <Grid x:Name="Column" Grid.Row="1" Grid.Column="0" Padding="8,0,4,8" RowSpacing="8">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Border x:Name="ColumnFieldSlot" Grid.Row="0">
                 <Grid x:Name="Field" RowSpacing="4">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -73,29 +73,65 @@
                     </ListView>
                 </Grid>
             </Border>
-            <ListView x:Name="Row" Grid.Row="1" SelectionMode="Single" CanReorderItems="True" AllowDrop="True" CanDragItems="True">
-                <ListView.ItemTemplate>
+            <!-- The pins: squares wearing the site's icon or a letter, the same in every window. -->
+            <GridView x:Name="PinGrid" Grid.Row="1" SelectionMode="Single" Visibility="Collapsed" Padding="0">
+                <GridView.ItemTemplate>
                     <DataTemplate x:DataType="core:Tab">
-                        <Grid Height="34" ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <Image Width="16" Height="16" Source="{x:Bind local:Icons.Of(Icon), Mode=OneWay}" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind Shown, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                            <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="10" Padding="4" Background="Transparent" BorderThickness="0" Click="OnCloseTabClick" Tag="{x:Bind}" />
+                        <Grid Width="48" Height="40" CornerRadius="6" ToolTipService.ToolTip="{x:Bind Shown, Mode=OneWay}">
+                            <Image Width="18" Height="18" Source="{x:Bind local:Icons.Of(Icon), Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind Letter, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold" Visibility="{x:Bind local:Icons.NoIcon(Icon), Mode=OneWay}" />
                         </Grid>
                     </DataTemplate>
-                </ListView.ItemTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+            <ListView x:Name="Row" Grid.Row="2" SelectionMode="Single" CanReorderItems="True" AllowDrop="True" CanDragItems="True">
+                <ListView.ItemTemplateSelector>
+                    <local:RowTemplates>
+                        <local:RowTemplates.Tab>
+                            <DataTemplate x:DataType="core:Tab">
+                                <Grid Height="34" ColumnSpacing="8" Margin="{x:Bind local:Icons.Indent(GroupId), Mode=OneWay}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Image Width="16" Height="16" Source="{x:Bind local:Icons.Of(Icon), Mode=OneWay}" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Shown, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="10" Padding="4" Background="Transparent" BorderThickness="0" Click="OnCloseTabClick" Tag="{x:Bind}" />
+                                </Grid>
+                            </DataTemplate>
+                        </local:RowTemplates.Tab>
+                        <local:RowTemplates.Group>
+                            <DataTemplate x:DataType="local:GroupRow">
+                                <Grid Height="30" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="{x:Bind Chevron, Mode=OneWay}" FontSize="10" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Name, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind Count, Mode=OneWay}" Opacity="0.6" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </local:RowTemplates.Group>
+                    </local:RowTemplates>
+                </ListView.ItemTemplateSelector>
             </ListView>
-            <Button Grid.Row="2" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Click="OnNewTabClick">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE710;" FontSize="12" />
-                    <TextBlock Text="New Tab" />
-                </StackPanel>
-            </Button>
+            <StackPanel Grid.Row="3" Spacing="6">
+                <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0" Click="OnNewTabClick">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                        <TextBlock Text="New Tab" />
+                    </StackPanel>
+                </Button>
+                <!-- The spaces: one button each, the one on screen outlined; right-click for its menu. -->
+                <StackPanel x:Name="SpacesBar" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" Visibility="Collapsed" />
+            </StackPanel>
         </Grid>
+
+        <!-- Folded away (Ctrl+S): a push against the window's left edge slides the column out over the page. -->
+        <Border x:Name="Edge" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2" Width="6" HorizontalAlignment="Left" Background="Transparent" Visibility="Collapsed" Canvas.ZIndex="5" />
 
         <!-- The page, as a card. -->
         <Border x:Name="Card" Grid.Row="1" Grid.Column="1" Margin="4,0,8,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
-            <Grid x:Name="Stage" />
+            <Grid>
+                <Grid x:Name="Stage" />
+                <!-- Split View's dividers and the outline of the page with the keys, over the pages. -->
+                <Canvas x:Name="SplitMarks" />
+            </Grid>
         </Border>
 
         <!-- The field: in the column, or floating over the page when the tabs are across the top. -->
@@ -175,6 +211,46 @@
                     <Button Content="Not now" Click="OnKeeping" Tag="later" />
                     <Button Content="Never for this site" Click="OnKeeping" Tag="never" />
                 </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- A peek at a link: its page over this one, which stays where it was underneath. -->
+        <Grid x:Name="Peeking" Grid.Row="1" Grid.Column="1" Visibility="Collapsed">
+            <Border x:Name="PeekScrim" Background="#33000000" CornerRadius="8" Margin="4,0,8,8" Tapped="OnPeekScrim" />
+            <Border x:Name="PeekCard" Margin="56,24,56,32" CornerRadius="10" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid Padding="12,0,4,0" ColumnSpacing="4">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock x:Name="PeekSite" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.8" />
+                        <Button Grid.Column="1" Content="Open as tab" Click="OnPeekKeep" />
+                        <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" Background="Transparent" BorderThickness="0" Click="OnPeekClose" />
+                    </Grid>
+                    <Grid x:Name="PeekStage" Grid.Row="1" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Ctrl+K: the open tabs by name. -->
+        <Border x:Name="Switcher" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,48,0,0" Width="560" Padding="8"
+                CornerRadius="8" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Visibility="Collapsed">
+            <StackPanel Spacing="6">
+                <TextBox x:Name="SwitcherText" PlaceholderText="Go to a tab" />
+                <ListView x:Name="SwitcherRows" SelectionMode="Single" IsItemClickEnabled="True" MaxHeight="420">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:PanelRow">
+                            <Grid ColumnSpacing="10" Padding="0,4">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Detail}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
             </StackPanel>
         </Border>
 

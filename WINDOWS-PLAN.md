@@ -166,6 +166,37 @@ Not done yet: zoom, the public suffix list, the bookmarks bar, a real icon and n
 
 **Phase 3 — The Arc layer.** Spaces (colours, gradients, routes, swipe); pins and pin folders; tab groups; Split View (up to 4); peek; the little window; Ctrl+Tab switcher; fold; side panel; sleep and archive; floating video.
 
+*Phase 3 status (2026-11-21): built.* `python test/phase3.py` runs 44 checks in three test worlds of its own, and they pass. Phases 1 and 2 still pass, and Core and Engine have 441 unit tests. Built:
+- **Split View:** two to four pages, keys moving between them, a draggable divider, saved in the Mac's shape.
+- **Peek:** Shift+click, in Search's isolated world, using real clicks only. Kept, it becomes a tab, loaded as it is.
+- **The Ctrl+K switcher.**
+- **Floating video:** Chromium's own picture-in-picture, asked for as a user gesture through DevTools.
+- **The folded column:** slides out from the window's edge.
+- **Small windows for links from other apps:** each has a browser model and engine of its own.
+- **Spaces:**
+  - their own row, session and, if chosen, sign-ins (a WebView2 profile per space);
+  - a colour or gradient washing the window, and Alt+1–9 to go to one;
+  - pages kept alive, set aside, while another space is shown;
+  - routes sending links from other apps to their space.
+- **Pins:** squares at the top of the column with the site's icon or a letter, kept per space.
+- **Tab groups:** headings that fold. A dragged tab joins the group it's dropped in.
+- **Sleep:** after 30 minutes, on unless turned off. The web view is closed, the address and scroll kept.
+- **Self-closing tabs:** off unless turned on, into a 30-day archive with a panel of its own.
+
+What Phase 3 taught us:
+- **Only a click moves the keys between split pages.** Taking every focus change as a choice let a programmatic focus arriving late steal the keys back from the page you'd just opened.
+- **A tab is loading from the moment it's told to navigate.** Waiting for WebView2's first event left a gap in which the sleep rule took pages that had never loaded.
+- **Close a secondary window's WebView2 while the window is closing, not after it has closed.** After, WinUI could fail inside its dispatcher (0xC000027B in CoreMessagingXP).
+- **Disk writes are flushed on the way out.** The space you were on lives in a notes file written in the background.
+
+Not done:
+- **Side panel:** needs extensions, so it moves to Phase 4.
+- **Pin folders, live folders and pins shared across windows:** the models are ported; the window doesn't use them yet.
+- **The pins file:** `pins.json` isn't written yet. Pins live in each space's session, which the Mac also reads when `pins.json` is missing.
+- **Swipe between spaces, and drag-and-drop of pins.**
+- **The Mac's picture-based Ctrl+Tab switcher.** Ctrl+Tab walks the row, as the README says.
+- **Removing a space's WebView2 profile from disk.** `Spaces.Erasing` lists the spaces whose profiles are due to go, but nothing deletes them yet.
+
 **Phase 4 — Extensions (smaller after spike 1).** Web Store install with CRX3 verification, the puzzle menu and pinning, popups, site access, unpacked + reload, native messaging.
 
 **Phase 5 — Ecosystem.** Import from Chrome, Edge, Brave, Arc, Firefox, and Zen (tabs, bookmarks, history; passwords via CSV); profiles; multiple windows; folder Sync compatible with the Mac; `search-mcp` agent control with its trust prompts.

@@ -116,6 +116,8 @@ public sealed partial class MainWindow
     }
 
     /// Typed as a person would, a letter at a time, into whichever box has the keys (the bench's test-only `type`).
+    internal void TypeIntoNamed(string into, string text) => TypeInto(into switch { "find" => FindText, "panel" => PanelSearch, "switcher" => SwitcherText, _ => FieldText }, text);
+
     private void TypeInto(TextBox box, string text)
     {
         if (box.FocusState == FocusState.Unfocused) box.Focus(FocusState.Programmatic);

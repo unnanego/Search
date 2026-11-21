@@ -7,6 +7,8 @@ namespace Search.App;
 public partial class App : Application
 {
     private static MainWindow? _window;
+    /// The small notes the Mac keeps in its settings (spaces on, the space in front, the last bookmarks folder).
+    public static Notes Notes { get; } = new();
 
     public App()
     {

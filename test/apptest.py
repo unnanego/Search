@@ -76,6 +76,8 @@ class App:
     def __exit__(self, *_):
         self.quit()
         self.server.shutdown()
+        crash = Path(folder(self.world), "crash.log")
+        if crash.exists(): print(f"--- crash.log of {self.world} ---\n" + crash.read_text("utf-8", errors="replace")[:4000])
         shutil.rmtree(folder(self.world), ignore_errors=True)
 
     def launch(self):

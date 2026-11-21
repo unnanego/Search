@@ -28,6 +28,7 @@ public sealed partial class MainWindow
         Key(VirtualKey.PageDown, Ctrl, () => _browser.Step(1));
         Key(VirtualKey.PageUp, Ctrl, () => _browser.Step(-1));
         for (var n = 1; n <= 9; n++) { var number = n; Key(VirtualKey.Number0 + n, Ctrl, () => _browser.SelectNumber(number)); }
+        for (var n = 1; n <= 9; n++) { var number = n; Key(VirtualKey.Number0 + n, Alt, () => GoToSpaceNumber(number)); }
         Key(VirtualKey.Left, Alt, () => Page(TabCommand.Back));
         Key(VirtualKey.Right, Alt, () => Page(TabCommand.Forward));
         Key((VirtualKey)219, Ctrl, () => Page(TabCommand.Back));    // Ctrl+[
@@ -56,6 +57,12 @@ public sealed partial class MainWindow
         Key(VirtualKey.O, CtrlShift, () => TogglePanel(PanelKind.Bookmarks));
         Key(VirtualKey.L, CtrlShift, () => TogglePanel(PanelKind.Passwords));
         Key(VirtualKey.D, Ctrl, ToggleBookmark);
+        Key(VirtualKey.P, CtrlShift, () => _ = ToggleFloat());
+        Key(VirtualKey.K, Ctrl, OpenSwitcher);
+        Key((VirtualKey)220, Ctrl, SplitCurrent);           // Ctrl+\
+        Key((VirtualKey)220, CtrlShift, SeparateCurrent);   // Ctrl+Shift+\
+        Key(VirtualKey.Left, Ctrl | Alt, () => _browser.StepPane(-1));
+        Key(VirtualKey.Right, Ctrl | Alt, () => _browser.StepPane(1));
         Key(VirtualKey.H, CtrlShift, ToggleHiding);
         Key(VirtualKey.U, CtrlShift, () => TogglePanel(PanelKind.Hidden));
         Key(VirtualKey.F9, VirtualKeyModifiers.None, () => _ = ToggleReading());
@@ -77,7 +84,7 @@ public sealed partial class MainWindow
             >= VirtualKey.A and <= VirtualKey.Z => ((char)key).ToString().ToLowerInvariant(),
             >= VirtualKey.Number0 and <= VirtualKey.Number9 => ((int)key - (int)VirtualKey.Number0).ToString(),
             >= VirtualKey.F1 and <= VirtualKey.F24 => "f" + ((int)key - (int)VirtualKey.F1 + 1),
-            VirtualKey.Escape => "esc", (VirtualKey)188 => ",", (VirtualKey)219 => "[", (VirtualKey)221 => "]",
+            VirtualKey.Escape => "esc", (VirtualKey)188 => ",", (VirtualKey)219 => "[", (VirtualKey)221 => "]", (VirtualKey)220 => "\\",
             _ => key.ToString().ToLowerInvariant()
         };
         return (modifiers.HasFlag(Ctrl) ? "ctrl+" : "") + (modifiers.HasFlag(Shift) ? "shift+" : "") + (modifiers.HasFlag(Alt) ? "alt+" : "") + name;
@@ -114,12 +121,13 @@ public sealed partial class MainWindow
             [var d] when char.IsAsciiDigit(d) => VirtualKey.Number0 + (d - '0'),
             "enter" => VirtualKey.Enter, "esc" or "escape" => VirtualKey.Escape, "tab" => VirtualKey.Tab, "up" => VirtualKey.Up, "down" => VirtualKey.Down,
             "left" => VirtualKey.Left, "right" => VirtualKey.Right, "pagedown" => VirtualKey.PageDown, "pageup" => VirtualKey.PageUp, "," => (VirtualKey)188,
-            "[" => (VirtualKey)219, "]" => (VirtualKey)221, ['f', _, ..] when int.TryParse(parts[^1][1..], out var n) => VirtualKey.F1 + (n - 1),
+            "[" => (VirtualKey)219, "]" => (VirtualKey)221, "\\" => (VirtualKey)220, ['f', _, ..] when int.TryParse(parts[^1][1..], out var n) => VirtualKey.F1 + (n - 1),
             _ => null
         };
         if (key is not { } k) return false;
         if (FieldText.FocusState != FocusState.Unfocused && FieldKey(k, modifiers.HasFlag(Alt))) return true;
         if (FindText.FocusState != FocusState.Unfocused && FindKey(k, modifiers.HasFlag(Shift))) return true;
+        if (Switcher.Visibility == Visibility.Visible && modifiers == VirtualKeyModifiers.None && SwitcherKey(k)) return true;
         if (k == VirtualKey.Tab && modifiers.HasFlag(Ctrl)) { _browser.Step(modifiers.HasFlag(Shift) ? -1 : 1); return true; }
         if (!_keys.TryGetValue((k, modifiers), out var action)) return false;
         action();
@@ -129,6 +137,8 @@ public sealed partial class MainWindow
     /// Esc puts away whatever is open: find, a panel, then full screen.
     private void PutAway()
     {
+        if (_peek is not null) { ClosePeek(); return; }
+        if (Switcher.Visibility == Visibility.Visible) { CloseSwitcher(); return; }
         if (_picking is not null) { StopPicking(); return; }
         if (FindBar.Visibility == Visibility.Visible) { CloseFind(); return; }
         if (_panel != PanelKind.None) { ClosePanel(); return; }

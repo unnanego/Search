@@ -19,6 +19,8 @@ public sealed class Pages
     private readonly Dictionary<Tab, Task<WebView2>> _building = new();
     private Theme _theme;
 
+    /// A page took the keyboard (a click into it): in a split, that page is the one in front now.
+    public event Action<Tab>? Focused;
     /// A page finished loading in any tab, bench and private ones included: for what reads the page (sign-ins).
     public event Action<Tab>? Loaded;
     /// A tab's web view let go of, because the tab closed or slept.
@@ -45,6 +47,10 @@ public sealed class Pages
     public IReadOnlyCollection<string> Keys { get; set; } = [];
 
     private readonly Dictionary<Tab, World> _worlds = new();
+    /// Tabs of the spaces not on screen: out of the row, their pages kept as they are, hidden, until their space is back.
+    public HashSet<Tab> Parked { get; } = new();
+    /// Where a peek's page is drawn: the peek panel, over the page, not the stage.
+    public Panel? PeekHost { get; set; }
     private readonly Dictionary<Tab, (string? Page, string? Skipper)> _youtube = new();
     private bool _shieldOn = true;
     private IReadOnlyCollection<string> _shieldPaused = [];
@@ -86,7 +92,9 @@ public sealed class Pages
         _browser = browser;
         _stage = stage;
         browser.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(Browser.Selected)) _ = Show(); };
-        browser.Tabs.CollectionChanged += (_, _) => { foreach (var gone in _views.Keys.Where(t => !browser.Tabs.Contains(t)).ToList()) Sleep(gone); };
+        browser.SplitsChanged += () => _ = Show();
+        stage.SizeChanged += (_, _) => Arrange();
+        browser.Tabs.CollectionChanged += (_, _) => { foreach (var gone in _views.Keys.Where(t => !t.Peek && !Parked.Contains(t) && !browser.Tabs.Contains(t)).ToList()) Sleep(gone); };
     }
 
     public WebView2? ViewOf(Tab tab) => _views.GetValueOrDefault(tab);
@@ -99,25 +107,68 @@ public sealed class Pages
         set { _theme = value; foreach (var view in _views.Values) Paint(view.CoreWebView2); }
     }
 
-    /// The tab in front gets a web view now if it has none and somewhere to go, and only it is shown. An empty tab
-    /// waiting for an address gets none until it has one.
+    /// Where each page on screen is, in the stage, after each layout: for the split's dividers and outline.
+    public IReadOnlyList<(Tab Tab, Windows.Foundation.Rect Rect)> Panes { get; private set; } = [];
+    public event Action? Arranged;
+    /// The room between two pages of a split, where its divider is.
+    public const double Gap = 6;
+
+    /// The pages on screen: the tab in front, or every page of its split.
+    public IReadOnlyList<Tab> OnScreen => _browser.SplitOf(_browser.Selected) is { } split ? split.Tabs : _browser.Selected is { } front ? [front] : [];
+
+    /// The pages on screen get a web view now if they have none and somewhere to go, and only they are shown. An empty
+    /// tab waiting for an address gets none until it has one.
     public async Task Show()
     {
         Arrange();
-        if (_browser.Selected is { Url: not null } front) await Ensure(front);
+        foreach (var tab in OnScreen.Where(t => t.Url is not null).ToList()) await Ensure(tab);
         Arrange();
     }
 
     private void Arrange()
     {
+        var split = _browser.SplitOf(_browser.Selected);
+        var shown = OnScreen;
+        var panes = new List<(Tab, Windows.Foundation.Rect)>();
+        double width = _stage.ActualWidth, height = _stage.ActualHeight, offset = 0;
+        for (var i = 0; i < shown.Count; i++)
+        {
+            var tab = shown[i];
+            Windows.Foundation.Rect rect;
+            if (split is null) rect = new(0, 0, width, height);
+            else
+            {
+                var gaps = Gap * (shown.Count - 1);
+                var horizontal = split.Axis == SplitAxis.Horizontal;
+                var length = Math.Max(0, ((horizontal ? width : height) - gaps) * split.Sizes[i]);
+                rect = horizontal ? new(offset, 0, length, height) : new(0, offset, width, length);
+                offset += length + Gap;
+            }
+            panes.Add((tab, rect));
+        }
         foreach (var (tab, view) in _views)
         {
-            var front = tab == _browser.Selected;
-            view.Visibility = front || tab.Bench ? Visibility.Visible : Visibility.Collapsed;
+            if (tab.Peek) continue;
+            var at = panes.FindIndex(p => p.Item1 == tab);
+            var visible = at >= 0;
+            view.Visibility = visible || tab.Bench ? Visibility.Visible : Visibility.Collapsed;
             view.Opacity = tab.Bench ? 0 : 1;
-            view.IsHitTestVisible = front;
-            if (front && _stage.Children.IndexOf(view) != _stage.Children.Count - 1) { _stage.Children.Remove(view); _stage.Children.Add(view); }
+            view.IsHitTestVisible = visible;
+            if (visible && split is not null)
+            {
+                var rect = panes[at].Item2;
+                (view.HorizontalAlignment, view.VerticalAlignment) = (HorizontalAlignment.Left, VerticalAlignment.Top);
+                (view.Width, view.Height, view.Margin) = (rect.Width, rect.Height, new Thickness(rect.X, rect.Y, 0, 0));
+            }
+            else
+            {
+                (view.HorizontalAlignment, view.VerticalAlignment) = (HorizontalAlignment.Stretch, VerticalAlignment.Stretch);
+                (view.Width, view.Height, view.Margin) = (double.NaN, double.NaN, new Thickness(0));
+            }
+            if (visible && _stage.Children.IndexOf(view) != _stage.Children.Count - 1 - (shown.Count - 1 - at)) { _stage.Children.Remove(view); _stage.Children.Add(view); }
         }
+        Panes = panes;
+        Arranged?.Invoke();
     }
 
     public Task<WebView2> Ensure(Tab tab, bool navigate = true)
@@ -136,7 +187,10 @@ public sealed class Pages
         var view = new WebView2 { Opacity = 0, IsHitTestVisible = false, IsTabStop = false };
         // A web view takes the keyboard when it starts; whoever had it (the field, as you type) gets it back.
         var focused = _stage.XamlRoot is { } root ? FocusManager.GetFocusedElement(root) as Control : null;
-        _stage.Children.Insert(0, view);
+        if (tab.Peek && PeekHost is { } peekHost) { view.Opacity = 1; view.IsHitTestVisible = true; peekHost.Children.Add(view); }
+        else _stage.Children.Insert(0, view);
+        // A click into the page, not the window giving it the keys: only that says this page is the one in front now.
+        view.GotFocus += (_, _) => { if (view.FocusState == FocusState.Pointer) Focused?.Invoke(tab); };
         if (tab.Private)
         {
             // In private tabs' own browser (Web.Private), InPrivate, a profile per tab: its own cookie jar, gone when
@@ -147,6 +201,14 @@ public sealed class Pages
             options.ProfileName = "private-" + tab.ShortId;
             await view.EnsureCoreWebView2Async(environment, options);
         }
+        else if (tab.Store is { } store)
+        {
+            // Its space's own sign-ins: a profile of its own in the shared browser.
+            var environment = await Web.Environment;
+            var options = environment.CreateCoreWebView2ControllerOptions();
+            options.ProfileName = store;
+            await view.EnsureCoreWebView2Async(environment, options);
+        }
         else await view.EnsureCoreWebView2Async(await Web.Environment);
         var core = view.CoreWebView2;
         Privacy.Apply(core.Settings);
@@ -154,7 +216,8 @@ public sealed class Pages
         if (Store.Testing) core.Profile.DefaultDownloadFolderPath = Store.File("Downloads");
         Paint(core);
         Wire(tab, core);
-        var world = await World.Open(core, _scripts.Prepend(KeyListener()));
+        // A peek also passes Esc: it's how a peek is put away, and the page under it can't hear it.
+        var world = await World.Open(core, _scripts.Prepend(KeyListener(tab.Peek ? Keys.Append("esc").ToList() : Keys)));
         world.Message += (kind, body) => OnMessage(tab, kind, body);
         _worlds[tab] = world;
         // The ad blocker before the first request, as the Mac holds the first loads until its list is ready.
@@ -165,7 +228,8 @@ public sealed class Pages
         tab.Live = true;
         tab.NavigateRequested += Navigate;
         tab.CommandRequested += Command;
-        if (navigate && tab.Url is { } url) core.Navigate(url.AbsoluteUri);
+        // Loading from the moment it's asked to, not from the first event: a tab in that moment isn't idle.
+        if (navigate && tab.Url is { } url) { tab.Loading = true; core.Navigate(url.AbsoluteUri); }
         Arrange();
         view.IsTabStop = true;
         // Only if the new web view took it: by now the keys may rightly be somewhere else.
@@ -188,6 +252,7 @@ public sealed class Pages
         core.HistoryChanged += (_, _) => { tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward; };
         core.FaviconChanged += (_, _) => tab.Icon = string.IsNullOrEmpty(core.FaviconUri) ? null : core.FaviconUri;
         core.ContainsFullScreenElementChanged += (_, _) => FullScreen?.Invoke(tab, core.ContainsFullScreenElement);
+        core.IsDocumentPlayingAudioChanged += (_, _) => tab.Audible = core.IsDocumentPlayingAudio;
         core.DownloadStarting += (_, e) => { e.Handled = true; DownloadStarted?.Invoke(tab, e.DownloadOperation); };
         core.PermissionRequested += (_, e) =>
         {
@@ -224,12 +289,12 @@ public sealed class Pages
     /// press the window's keys by dispatching events; names from KeyboardEvent.code, or keyCode where there's no code
     /// (an on-screen keyboard, some remote sessions), so the layout never matters. It runs in the isolated world: the
     /// page can't see it, and only it can reach the window.
-    private string KeyListener() => $$"""
+    private static string KeyListener(IReadOnlyCollection<string> keys) => $$"""
         (() => {
-          const keys = new Set({{JsonSerializer.Serialize(Keys)}});
-          const named = { BracketLeft: '[', BracketRight: ']', Comma: ',', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+          const keys = new Set({{JsonSerializer.Serialize(keys)}});
+          const named = { BracketLeft: '[', BracketRight: ']', Backslash: '\\\\', Comma: ',', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
                           PageUp: 'pageup', PageDown: 'pagedown', Tab: 'tab', Escape: 'esc', Enter: 'enter', Equal: '=', Minus: '-' };
-          const byCode = { 9: 'tab', 13: 'enter', 27: 'esc', 33: 'pageup', 34: 'pagedown', 37: 'left', 38: 'up', 39: 'right', 40: 'down', 187: '=', 188: ',', 189: '-', 219: '[', 221: ']' };
+          const byCode = { 220: '\\\\', 9: 'tab', 13: 'enter', 27: 'esc', 33: 'pageup', 34: 'pagedown', 37: 'left', 38: 'up', 39: 'right', 40: 'down', 187: '=', 188: ',', 189: '-', 219: '[', 221: ']' };
           const fromKeyCode = k => k >= 65 && k <= 90 ? String.fromCharCode(k + 32) : k >= 48 && k <= 57 ? String(k - 48) : k >= 112 && k <= 135 ? 'f' + (k - 111) : byCode[k] || '';
           const name = e => { const c = e.code || ''; return c.startsWith('Key') ? c.slice(3).toLowerCase() : c.startsWith('Digit') ? c.slice(5) : named[c] || (c ? c.toLowerCase() : fromKeyCode(e.keyCode)); };
           addEventListener('keydown', e => {
@@ -249,9 +314,9 @@ public sealed class Pages
     {
         Heard[tab] = Heard.GetValueOrDefault(tab) + 1;
         if (kind != "key") { Message?.Invoke(tab, kind, body); return; }
-        if (body.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && Keys.Contains(name)) KeyPressed?.Invoke(tab, name);
+        if (body.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && (Keys.Contains(name) || tab.Peek && name == "esc")) KeyPressed?.Invoke(tab, name);
     }
-    private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) core.Navigate(url.AbsoluteUri); }
+    private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) { tab.Loading = true; core.Navigate(url.AbsoluteUri); } }
 
     private void Command(Tab tab, TabCommand command)
     {
@@ -267,6 +332,16 @@ public sealed class Pages
         }
     }
 
+    /// A peek kept: its page, loaded as it is, moved from the peek panel to the stage, its tab now one of the row's.
+    public void Keep(Tab peek)
+    {
+        if (!_views.TryGetValue(peek, out var view)) return;
+        PeekHost?.Children.Remove(view);
+        _stage.Children.Insert(0, view);
+        peek.Peek = false;
+        Arrange();
+    }
+
     /// The tab's web view let go of: closed, or asleep. Its address and title stay with the tab.
     public void Sleep(Tab tab)
     {
@@ -278,6 +353,7 @@ public sealed class Pages
         tab.Live = false;
         tab.Loading = false;
         _stage.Children.Remove(view);
+        PeekHost?.Children.Remove(view);
         view.Close();
         Released?.Invoke(tab);
     }

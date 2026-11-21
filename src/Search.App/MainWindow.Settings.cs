@@ -33,10 +33,21 @@ public sealed partial class MainWindow
         export.Click += (_, _) => _ = ExportBookmarks();
         bookmarks.Children.Add(import);
         bookmarks.Children.Add(export);
+        var spaces = new ToggleSwitch { Header = "Spaces", IsOn = _spaces.UsesSpaces };
+        spaces.Toggled += (_, _) => { if (!spaces.IsOn && _space != _spaces.Home(_spaces.ProfileOf(_space))) GoToSpace(_spaces.Home(_spaces.ProfileOf(_space))); _spaces.UsesSpaces = spaces.IsOn; DrawSpaces(); };
+        var routes = new ToggleSwitch { Header = "Send links from other apps to their space", IsOn = _routes.On };
+        routes.Toggled += (_, _) => _routes.On = routes.IsOn;
+        var sleep = new ToggleSwitch { Header = "Put tabs you aren't using to sleep", IsOn = SleepOn };
+        sleep.Toggled += (_, _) => SleepOn = sleep.IsOn;
+        var lives = new[] { TabLife.Never, TabLife.HalfDay, TabLife.Day, TabLife.Week, TabLife.Month };
+        var closing = new ComboBox { Header = "Close tabs left alone after", ItemsSource = lives.Select(l => Closing.Title(l)).ToList(), SelectedIndex = Array.IndexOf(lives, TabLife), MinWidth = 240 };
+        closing.SelectionChanged += (_, _) => TabLife = lives[closing.SelectedIndex];
         var styles = new ToggleSwitch { Header = "Your own style for a site", IsOn = _prefs.SiteStyles };
         styles.Toggled += (_, _) => _prefs.SiteStyles = styles.IsOn;
         var passwords = new ToggleSwitch { Header = "Offer to save passwords", IsOn = _prefs.SavePasswords };
         passwords.Toggled += (_, _) => _prefs.SavePasswords = passwords.IsOn;
+        var little = new ToggleSwitch { Header = "Links from other apps open in a small window", IsOn = _prefs.LittleLinks };
+        little.Toggled += (_, _) => _prefs.LittleLinks = little.IsOn;
         var browser = new Button { Content = "Make Search your default browser…" };
         browser.Click += (_, _) => { Registration.Register(); Registration.OpenDefaultApps(); };
         var updates = new TextBlock { Text = Updater.Status ?? "Search checks for a newer version once a day and has it ready for the next launch.", TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
@@ -49,7 +60,7 @@ public sealed partial class MainWindow
             Title = "Settings",
             CloseButtonText = "Done",
             RequestedTheme = Root.ActualTheme,
-            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, shield, paused, styles, bookmarks, passwords, browser, updates, bench, benchNote } } }
+            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, spaces, routes, sleep, closing, shield, paused, styles, bookmarks, passwords, little, browser, updates, bench, benchNote } } }
         };
         try { await _settings.ShowAsync(); }
         finally { _prefs.CustomEngine = custom.Text.Trim(); _settings = null; }

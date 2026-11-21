@@ -56,7 +56,7 @@ public sealed partial class MainWindow
             case "probe":
                 return Probe();
             // Test runs only, as on the Mac: a key as the window takes it, and typing into the field or find.
-            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" when !Store.Testing:
+            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" when !Store.Testing:
                 return BenchServer.Error($"{Text("do")} only works on a --test run");
             case "press":
                 if (Text("keys") is not { } combo) return BenchServer.Error("press needs keys, e.g. ctrl+t");
@@ -64,7 +64,7 @@ public sealed partial class MainWindow
                 return Press(combo) ? new JsonObject { ["ok"] = true, ["focusedBefore"] = before } : BenchServer.Error($"nothing answers {combo} (focus: {before})");
             case "type":
                 if (Text("text") is not { } words) return BenchServer.Error("type needs text");
-                TypeInto(Text("into") switch { "find" => FindText, "panel" => PanelSearch, _ => FieldText }, words);
+                TypeIntoNamed(Text("into") ?? "field", words);
                 await Task.Delay(50);
                 return new JsonObject { ["ok"] = true };
             case "answer":
@@ -86,6 +86,34 @@ public sealed partial class MainWindow
                 if (PanelRows.ItemsSource is not IList<PanelRow> panelRows || (int)(Number("index") ?? 0) is var at && (at < 0 || at >= panelRows.Count)) return BenchServer.Error("no such panel row");
                 OnPanelRowAction(new Button { Tag = panelRows[at] }, new RoutedEventArgs());
                 return new JsonObject { ["ok"] = true };
+            case "keeppeek":
+                if (_peek is null) return BenchServer.Error("no peek");
+                KeepPeek();
+                return new JsonObject { ["ok"] = true };
+            case "keeplittle":
+                if (_littles.FirstOrDefault() is not { } little) return BenchServer.Error("no small window");
+                if (little.Tab.Url is { } kept) OpenHere(kept);
+                little.Close();
+                return new JsonObject { ["ok"] = true };
+            case "spaces":
+                _spaces.UsesSpaces = Flag("on");
+                DrawSpaces();
+                return new JsonObject { ["ok"] = true };
+            case "addspace":
+                if (_spaces.Add(Text("name") ?? "Space", sharesSignIns: !Flag("own")) is not { } made) return BenchServer.Error("couldn't make it");
+                GoToSpace(made.Id);
+                return new JsonObject { ["ok"] = true, ["store"] = _spaces.StoreName(made.Id) };
+            case "space":
+                GoToSpaceNumber((int)(Number("number") ?? 1));
+                return new JsonObject { ["space"] = CurrentSpace.Name };
+            case "route":
+                if (Text("site") is not { } site || _spaces.All.FirstOrDefault(s => s.Name == Text("name")) is not { } to) return BenchServer.Error("route needs a site and a space's name");
+                _routes.On = true;
+                _routes.Set(site, to.Id);
+                return new JsonObject { ["ok"] = true };
+            case "edge":
+                SlideOut();
+                return new JsonObject { ["ok"] = _slidOut };
             case "select":
                 if (Text("id") is not { } which || _browser.Ordinary.FirstOrDefault(t => t.ShortId.StartsWith(which, StringComparison.OrdinalIgnoreCase)) is not { } chosen) return BenchServer.Error("select needs the id of an ordinary tab");
                 _browser.Selected = chosen;
@@ -126,6 +154,16 @@ public sealed partial class MainWindow
                 if (Text("expression") is not { } expression) return BenchServer.Error("world needs an expression");
                 await _pages.Ensure(found);
                 return new JsonObject { ["value"] = (await _pages.Evaluate(found, expression))?.DeepClone() };
+            case "pin" when Store.Testing:
+                if (Flag("off")) _browser.Unpin(found); else _browser.Pin(found);
+                return Describe(found);
+            case "group" when Store.Testing:
+                if (Flag("off")) _browser.Ungroup(found);
+                else _browser.Group(found, _browser.Groups.FirstOrDefault(g => g.Name == Text("name")), Text("name") ?? "");
+                return Describe(found);
+            case "fold" when Store.Testing:
+                if (_browser.Groups.FirstOrDefault(g => g.Id == found.GroupId) is { } folded) _browser.SetGroup(folded with { Collapsed = !folded.Collapsed });
+                return Describe(found);
             case "close":
                 if (!found.Bench) return BenchServer.Error("not a bench tab — only tabs the bench opened can be closed from here");
                 _browser.Close(found);
@@ -136,12 +174,12 @@ public sealed partial class MainWindow
     }
 
     /// By any prefix of its id, as the bench names tabs. Outside a test run only the bench's own.
-    private Tab? Find(string id) => _browser.Tabs.FirstOrDefault(t => (t.Bench || Store.Testing) && t.Id.ToString("N").StartsWith(id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
+    private Tab? Find(string id) => (_peek is { } peek && peek.ShortId.StartsWith(id, StringComparison.OrdinalIgnoreCase) && Store.Testing ? peek : null) ?? _browser.Tabs.FirstOrDefault(t => (t.Bench || Store.Testing) && t.Id.ToString("N").StartsWith(id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
 
     private JsonObject Describe(Tab tab) => new()
     {
         ["id"] = tab.ShortId, ["url"] = tab.Url?.AbsoluteUri, ["title"] = tab.Title, ["name"] = tab.Name, ["loading"] = tab.Loading,
-        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? "", ["heard"] = _pages.Heard.GetValueOrDefault(tab)
+        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? "", ["pinned"] = tab.Pinned, ["letter"] = tab.Letter, ["group"] = _browser.Groups.FirstOrDefault(g => g.Id == tab.GroupId)?.Name, ["heard"] = _pages.Heard.GetValueOrDefault(tab)
     };
 
     /// A picture of the page, through Chromium's own capture, which works whether or not the tab is in front.
@@ -173,6 +211,7 @@ public sealed partial class MainWindow
         ["offering"] = new JsonArray((Offers.ItemsSource as IEnumerable<Offer> ?? []).Select(o => (JsonNode)JsonValue.Create(o.Suggestion.Kind + " " + o.Suggestion.Key)!).ToArray()),
         ["sidebar"] = _prefs.TabsOnSide,
         ["folded"] = _prefs.Folded,
+        ["slidOut"] = _slidOut,
         ["columnWidth"] = _prefs.ColumnWidth,
         ["appearance"] = Root.ActualTheme.ToString().ToLowerInvariant(),
         ["find"] = FindBar.Visibility == Visibility.Visible,
@@ -182,6 +221,9 @@ public sealed partial class MainWindow
         ["findRaw"] = _finding is { } f ? new JsonArray(f.Find.MatchCount, f.Find.ActiveMatchIndex) : null,
         ["fullScreen"] = _fullScreen,
         ["panel"] = _panel.ToString().ToLowerInvariant(),
+        ["littles"] = new JsonArray(_littles.Select(l => (JsonNode)new JsonObject { ["url"] = l.Tab.Url?.AbsoluteUri, ["title"] = l.Tab.Title }).ToArray()),
+        ["peek"] = _peek is { } peek ? new JsonObject { ["id"] = peek.ShortId, ["url"] = peek.Url?.AbsoluteUri, ["title"] = peek.Title } : null,
+        ["switcher"] = Switcher.Visibility == Visibility.Visible ? new JsonArray((SwitcherRows.ItemsSource as IEnumerable<PanelRow> ?? []).Select(r => (JsonNode)JsonValue.Create(r.Title)!).ToArray()) : null,
         ["asking"] = _asking is { } asking ? AskingText.Text : null,
         ["keeping"] = Keeping.Visibility == Visibility.Visible ? KeepingText.Text : null,
         ["logins"] = new JsonArray((LoginRows.ItemsSource as IEnumerable<PanelRow> ?? []).Where(_ => Logins.Visibility == Visibility.Visible).Select(r => (JsonNode)JsonValue.Create(r.Title)!).ToArray()),
@@ -190,6 +232,12 @@ public sealed partial class MainWindow
         ["notifications"] = new JsonArray(_posted.Select(p => (JsonNode)new JsonObject { ["site"] = p.Site, ["title"] = p.Title, ["body"] = p.Body }).ToArray()),
         ["panelRows"] = new JsonArray((PanelRows.ItemsSource as IEnumerable<PanelRow> ?? []).Select(r => (JsonNode)new JsonObject { ["title"] = r.Title, ["detail"] = r.Detail }).ToArray()),
         ["selected"] = _browser.Selected?.ShortId,
+        ["space"] = CurrentSpace.Name,
+        ["column"] = new JsonArray(_row.Items.Select(i => (JsonNode)JsonValue.Create(i is GroupRow g ? "group " + g.Name + (g.Group.Collapsed ? " (folded)" : "") : i is Tab t ? t.ShortId : "?")!).ToArray()),
+        ["pins"] = new JsonArray(_row.Pins.Select(p => (JsonNode)JsonValue.Create(p.ShortId)!).ToArray()),
+        ["spaces"] = new JsonArray(_spaces.All.Select(s => (JsonNode)JsonValue.Create(s.Name)!).ToArray()),
+        ["store"] = _browser.Store,
+        ["panes"] = new JsonArray(_pages.Panes.Select(p => (JsonNode)new JsonObject { ["id"] = p.Tab.ShortId, ["x"] = p.Rect.X, ["y"] = p.Rect.Y, ["w"] = p.Rect.Width, ["h"] = p.Rect.Height }).ToArray()),
         ["tabs"] = _browser.Ordinary.Count(),
         ["windows"] = new JsonArray(new JsonObject { ["kind"] = "browser", ["title"] = Title, ["visible"] = AppWindow.IsVisible, ["frame"] = new JsonArray(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height) })
     };

@@ -31,11 +31,14 @@ public sealed partial class MainWindow : Window
         _pages = new Pages(_browser, Stage) { Theme = prefs.Theme };
         _ = _pages.SetShield(prefs.Shield, prefs.ShieldPaused);
         Row.ItemsSource = _row.Items;
-        Strip.ItemsSource = _row.Items;
+        Strip.ItemsSource = _row.Flat;
+        PinGrid.ItemsSource = _row.Pins;
+        PinGrid.SelectionChanged += OnRowSelectionChanged;
+        _row.Pins.CollectionChanged += (_, _) => PinGrid.Visibility = _row.Pins.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         Row.SelectionChanged += OnRowSelectionChanged;
         Strip.SelectionChanged += OnRowSelectionChanged;
-        Row.DragItemsCompleted += (_, _) => _row.Reordered();
-        Strip.DragItemsCompleted += (_, _) => _row.Reordered();
+        Row.DragItemsCompleted += (_, e) => _row.Reordered(e.Items.ToList());
+        Strip.DragItemsCompleted += (_, e) => _row.Reordered(e.Items.ToList());
         _browser.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(Browser.Selected)) OnSelected(); };
         _pages.Visited += (_, url, title) => _history.Record(url, title);
         _pages.TitleChanged += (tab, title) => { if (tab == _browser.Selected) Title = Shown(tab); if (!tab.Bench && !tab.Private && tab.Url is { } url) _history.Retitle(url, title); };
@@ -44,18 +47,27 @@ public sealed partial class MainWindow : Window
         WireField();
         WireKeys();
         _pages.Keys = PageKeys();
-        _pages.KeyPressed += (tab, combo) => { if (tab == _browser.Selected) Press(combo); };
+        _pages.KeyPressed += (tab, combo) => { if (tab == _browser.Selected || tab.Peek && tab == _peek) Press(combo); };
         WireFind();
         WirePanels();
         WireSite();
         WirePasswords();
         WireBookmarks();
         WireCurtain();
+        WireSplit();
+        WireSwitcher();
+        WirePeek();
+        WireFold();
+        WireIdle();
+        WireRow();
         Lay();
         Paint();
+        StartSpaces();
         Restore();
+        _browser.SessionChanged += () => SaveSession(now: false);
         Bench();
-        Closed += (_, _) => { SaveSession(now: true); _history.Flush(); _bench?.Dispose(); };
+        // On the way out, whatever is still on its way to the disk (notes, bookmarks, the vault) gets there first.
+        Closed += (_, _) => { SaveSession(now: true); _history.Flush(); _bench?.Dispose(); Disk.Flush().Wait(TimeSpan.FromSeconds(3)); };
         if (Store.Testing && Environment.GetEnvironmentVariable("SEARCH_FOCUS_LOG") == "1")
         {
             Microsoft.UI.Xaml.Input.FocusManager.GotFocus += (_, e) => File.AppendAllText(Store.File("focus.log"), $"{DateTime.Now:HH:mm:ss.fff} got {Describe(e.NewFocusedElement)}\n");
@@ -68,9 +80,28 @@ public sealed partial class MainWindow : Window
 
     private static string Describe(object? element) => element switch { FrameworkElement { Name.Length: > 0 } f => $"{f.GetType().Name} {f.Name}", null => "null", _ => element.GetType().Name };
 
-    /// A link from another app (Links.swift): its own tab, in front. (The Mac's small window for these is Phase 3.)
+    private readonly List<LittleWindow> _littles = new();
+
+    /// A link from another app (Links.swift): a small window of its own (Little.swift), or a tab in front.
     public void FromElsewhere(Uri link)
     {
+        // A route sends the link to its space, in the window, with that space's sign-ins.
+        if (_spaces.UsesSpaces && Route(link)) { OpenHere(link); return; }
+        if (_prefs.LittleLinks && link.Scheme is "http" or "https")
+        {
+            var little = new LittleWindow(this, link, _prefs);
+            _littles.Add(little);
+            little.Gone += gone => _littles.Remove(gone);
+            little.Activate();
+            return;
+        }
+        OpenHere(link);
+    }
+
+    /// A page to a tab of this window, in front: from another app, or kept from a small window.
+    public void OpenHere(Uri link)
+    {
+        Bring();
         var tab = _browser.Selected is { Url: null, Private: false } empty ? empty : _browser.Open(link);
         if (tab.Url is null) tab.Go(link);
         _ = Front(tab, givePage: true);
@@ -88,7 +119,8 @@ public sealed partial class MainWindow : Window
     private void OnSelected()
     {
         var tab = _browser.Selected;
-        Row.SelectedItem = tab;
+        Row.SelectedItem = tab is { Pinned: false } ? tab : null;
+        PinGrid.SelectedItem = tab is { Pinned: true } ? tab : null;
         Strip.SelectedItem = tab;
         Title = tab is null ? "Search" : Shown(tab);
         ShowAddressNow();
@@ -113,7 +145,14 @@ public sealed partial class MainWindow : Window
 
     private void OnRowSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is ListView { SelectedItem: Tab tab } && tab != _browser.Selected) _browser.Selected = tab;
+        var list = (ListViewBase)sender;
+        if (list.SelectedItem is Tab tab && tab != _browser.Selected) _browser.Selected = tab;
+        // A group's heading folds or opens its group; the tab in front stays selected.
+        else if (list.SelectedItem is GroupRow heading)
+        {
+            _browser.SetGroup(heading.Group with { Collapsed = !heading.Group.Collapsed });
+            list.SelectedItem = _browser.Selected is { } front && _row.Items.Contains(front) ? front : null;
+        }
     }
 
     private void OnCloseTabClick(object sender, RoutedEventArgs e) { if (sender is FrameworkElement { Tag: Tab tab }) Close(tab); }
@@ -150,6 +189,7 @@ public sealed partial class MainWindow : Window
         if (column) ColumnFieldSlot.Child = Field; else FieldHost.Children.Add(Field);
         FieldHost.Visibility = Visibility.Collapsed;
         SetTitleBar(side ? TopBar : DragSpace);
+        LayFold();
     }
 
     private static void Detach(FrameworkElement element)
@@ -166,6 +206,7 @@ public sealed partial class MainWindow : Window
     private void Paint()
     {
         Root.RequestedTheme = _prefs.Theme switch { Theme.Light => ElementTheme.Light, Theme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+        Root.Background = (_spaces is null ? null : Wash()) ?? new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         _pages.Theme = _prefs.Theme;
     }
 

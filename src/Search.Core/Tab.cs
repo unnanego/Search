@@ -18,6 +18,24 @@ public sealed class Tab : Observable
     public bool Bench { get; init; }
     /// Its own cookie jar, and nothing left behind when it closes.
     public bool Private { get; init; }
+    /// A peek at a link (Peek.swift): a page over the page, not in the row until it's kept.
+    public bool Peek { get; set; }
+    private Guid? _pinId, _groupId;
+    private string? _letter;
+
+    /// A pin (Pins.swift): its identity, the letter or icon it wears, the page it was pinned at. Null for a tab.
+    public Guid? PinId { get => _pinId; set { if (Set(ref _pinId, value)) Changed(nameof(Pinned)); } }
+    public string? Letter { get => _letter; set => Set(ref _letter, value); }
+    public Uri? Home { get; set; }
+    public bool Pinned => _pinId is not null;
+    /// The tab group it's in (TabGroup.swift), if any.
+    public Guid? GroupId { get => _groupId; set => Set(ref _groupId, value); }
+    /// Playing sound right now: a tab that is isn't put to sleep or closed.
+    public bool Audible { get; set; }
+    /// Where the page was scrolled to when it was put to sleep, to go back to when it wakes.
+    public (double X, double Y)? Scroll { get; set; }
+    /// The WebView2 profile its pages use: its space's own sign-ins (Spaces.StoreName), or null for the default.
+    public string? Store { get; init; }
     public DateTimeOffset? Touched { get; set; }
     /// The first 8 hex digits of its id, as the bench names tabs.
     public string ShortId => Id.ToString("N")[..8];
