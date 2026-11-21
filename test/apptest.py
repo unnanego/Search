@@ -39,11 +39,21 @@ VK = {"ctrl": 0x11, "shift": 0x10, "alt": 0x12, "enter": 0x0D, "tab": 0x09, "esc
 
 
 class App:
-    def __init__(self, world, pages=None, settings=None):
+    def __init__(self, world, pages=None, settings=None, hosts=None, files=None):
         self.world, self.pages, self.settings, self.process = world, pages or {}, settings, None
+        # Files to put in the world's folder before the first launch (name → text, or a function of the app).
+        self.files = files or {}
+        self.hits = {}
+        # Real hostnames the test wants served by its own server (e.g. an ad network, to see it blocked).
+        self.hosts = hosts or []
         app = self
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                host = (self.headers.get("Host") or "").split(":")[0]
+                app.hits[host] = app.hits.get(host, 0) + 1
+                if self.path.startswith("/img"):
+                    gif = bytes.fromhex("47494638396101000100800000ffffff00000021f90401000000002c00000000010001000002024401003b")
+                    self.send_response(200); self.send_header("Content-Type", "image/gif"); self.send_header("Content-Length", str(len(gif))); self.end_headers(); self.wfile.write(gif); return
                 body = app.pages.get(self.path.split("?")[0], "<title>404</title>not found").encode()
                 self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             def log_message(self, *a): pass
@@ -54,8 +64,10 @@ class App:
 
     def __enter__(self):
         shutil.rmtree(folder(self.world), ignore_errors=True)
+        os.makedirs(folder(self.world), exist_ok=True)
+        for name, text in self.files.items():
+            Path(folder(self.world), name).write_text(text(self) if callable(text) else text, "utf-8")
         if self.settings is not None:
-            os.makedirs(folder(self.world), exist_ok=True)
             settings = self.settings(self) if callable(self.settings) else self.settings
             Path(folder(self.world), "settings.json").write_text(__import__("json").dumps(settings), "utf-8")
         self.launch()
@@ -67,7 +79,9 @@ class App:
         shutil.rmtree(folder(self.world), ignore_errors=True)
 
     def launch(self):
-        self.process = subprocess.Popen([str(self.exe)], env=dict(os.environ, SEARCH_PROBE=self.world, SEARCH_BENCH="1"))
+        env = dict(os.environ, SEARCH_PROBE=self.world, SEARCH_BENCH="1")
+        if self.hosts: env["SEARCH_WEBVIEW_ARGS"] = "--host-resolver-rules=\"" + ", ".join(f"MAP {h} 127.0.0.1" for h in self.hosts) + "\""
+        self.process = subprocess.Popen([str(self.exe)], env=env)
         for _ in range(150):
             try:
                 if "error" not in self.ask({"do": "probe"}): return
@@ -132,6 +146,21 @@ class App:
             time.sleep(0.3)
             if user32.GetForegroundWindow() == h and attempt: _send(_key(0x1B), _key(0x1B, flags=_KEYUP)); time.sleep(0.1)
         raise SystemExit("could not bring the Search window to the front; stopped before sending any keys")
+
+    def click(self, x=0.6, y=0.5):
+        """A real left click at a point of the window, as fractions of its width and height (default: in the page)."""
+        self.front()
+        rect = w.RECT(); user32.GetWindowRect(self.window(), ctypes.byref(rect))
+        px, py = int(rect.left + (rect.right - rect.left) * x), int(rect.top + (rect.bottom - rect.top) * y)
+        user32.SetCursorPos(px, py)
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("data", w.DWORD), ("flags", w.DWORD), ("time", w.DWORD), ("extra", ctypes.c_size_t)]
+        class MINPUT(ctypes.Structure):
+            class _U(ctypes.Union): _fields_ = [("mi", MOUSEINPUT), ("pad", ctypes.c_byte * 32)]
+            _anonymous_ = ("u",); _fields_ = [("type", w.DWORD), ("u", _U)]
+        down, up = MINPUT(type=0, mi=MOUSEINPUT(0, 0, 0, 0x0002, 0, 0)), MINPUT(type=0, mi=MOUSEINPUT(0, 0, 0, 0x0004, 0, 0))
+        array = (MINPUT * 2)(down, up); user32.SendInput(2, array, ctypes.sizeof(MINPUT))
+        time.sleep(0.4)
 
     def keys(self, *combo, settle=0.5):
         """keys("ctrl", "t"): pressed in order, released in reverse."""

@@ -50,7 +50,12 @@
             <Border x:Name="ColumnFieldSlot" Grid.Row="0">
                 <Grid x:Name="Field" RowSpacing="4">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <TextBox x:Name="FieldText" PlaceholderText="Search or enter an address" IsSpellCheckEnabled="False" />
+                    <Grid ColumnSpacing="4">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Button x:Name="SiteButton" Content="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="12" Padding="8,6" Background="Transparent" BorderThickness="0"
+                                ToolTipService.ToolTip="About this site" Click="OnSiteButton" />
+                        <TextBox x:Name="FieldText" Grid.Column="1" PlaceholderText="Search or enter an address" IsSpellCheckEnabled="False" />
+                    </Grid>
                     <ListView x:Name="Offers" Grid.Row="1" Visibility="Collapsed" SelectionMode="Single" IsItemClickEnabled="True" MaxHeight="360"
                               Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" CornerRadius="8">
                         <ListView.ItemTemplate>
@@ -95,6 +100,83 @@
 
         <!-- The field: in the column, or floating over the page when the tabs are across the top. -->
         <Grid x:Name="FieldHost" Grid.Row="1" Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Center" Width="640" Margin="0,48,0,0" Visibility="Collapsed" />
+
+        <!-- A panel over the page's right side: history, downloads, bookmarks. Searchable, one key away, Esc puts it away. -->
+        <Border x:Name="Panel" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Right" Width="400" Margin="0,0,8,8" Padding="12" CornerRadius="8"
+                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Visibility="Collapsed">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <Grid>
+                    <TextBlock x:Name="PanelTitle" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <Button HorizontalAlignment="Right" Content="&#xE711;" FontFamily="Segoe Fluent Icons" Background="Transparent" BorderThickness="0" Click="OnPanelClose" />
+                </Grid>
+                <TextBox x:Name="PanelSearch" Grid.Row="1" PlaceholderText="Search" />
+                <ListView x:Name="PanelRows" Grid.Row="2" SelectionMode="Single" IsItemClickEnabled="True">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:PanelRow">
+                            <Grid ColumnSpacing="10" Padding="0,6">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" VerticalAlignment="Top" Margin="0,3,0,0" />
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Detail, Mode=OneWay}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" />
+                                    <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" Visibility="{x:Bind ProgressShown, Mode=OneWay}" IsIndeterminate="{x:Bind Indeterminate, Mode=OneWay}" />
+                                </StackPanel>
+                                <Button Grid.Column="2" Content="{x:Bind ActionGlyph, Mode=OneWay}" FontFamily="Segoe Fluent Icons" FontSize="12" Background="Transparent" BorderThickness="0"
+                                        Visibility="{x:Bind ActionShown, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind ActionName, Mode=OneWay}" Click="OnPanelRowAction" Tag="{x:Bind}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="PanelFoot" Click="OnPanelFoot" Visibility="Collapsed" />
+                    <TextBlock x:Name="PanelEmpty" VerticalAlignment="Center" Opacity="0.6" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- A question a page asked: the camera, the microphone, where you are, notifications. Over its own page. -->
+        <Border x:Name="Asking" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,12,0,0" Padding="16,12" MaxWidth="560"
+                CornerRadius="8" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Visibility="Collapsed">
+            <StackPanel Spacing="10">
+                <TextBlock x:Name="AskingText" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="AskingAllow" Content="Allow" Style="{ThemeResource AccentButtonStyle}" Click="OnAskingAnswer" Tag="allow" />
+                    <Button x:Name="AskingDeny" Content="Don't allow" Click="OnAskingAnswer" Tag="deny" />
+                    <CheckBox x:Name="AskingKeep" Content="Remember for this site" IsChecked="True" Margin="8,0,0,0" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Your accounts for the sign-in box the caret is in, under that box. Placed by MainWindow.Passwords. -->
+        <Canvas x:Name="Overlay" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2">
+            <Border x:Name="Logins" Width="300" Padding="4" CornerRadius="8" Visibility="Collapsed"
+                    Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <ListView x:Name="LoginRows" SelectionMode="None" IsItemClickEnabled="True" MaxHeight="260">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:PanelRow">
+                            <StackPanel Padding="0,4">
+                                <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{x:Bind Detail}" TextTrimming="CharacterEllipsis" Opacity="0.6" FontSize="12" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+        </Canvas>
+
+        <!-- A sign-in that worked, offered for keeping. -->
+        <Border x:Name="Keeping" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,20,0" Padding="16,12" MaxWidth="420"
+                CornerRadius="8" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Visibility="Collapsed">
+            <StackPanel Spacing="10">
+                <TextBlock x:Name="KeepingText" TextWrapping="Wrap" />
+                <StackPanel x:Name="KeepingButtons" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="KeepingSave" Content="Save" Style="{ThemeResource AccentButtonStyle}" Click="OnKeeping" Tag="save" />
+                    <Button Content="Not now" Click="OnKeeping" Tag="later" />
+                    <Button Content="Never for this site" Click="OnKeeping" Tag="never" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
 
         <!-- Find on the page. -->
         <Border x:Name="FindBar" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,20,0" Padding="8,4"

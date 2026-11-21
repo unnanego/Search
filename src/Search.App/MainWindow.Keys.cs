@@ -51,6 +51,14 @@ public sealed partial class MainWindow
         Key(VirtualKey.F12, VirtualKeyModifiers.None, () => { if (_browser.Selected is { } tab) _pages.CoreOf(tab)?.OpenDevToolsWindow(); });
         Key(VirtualKey.I, CtrlShift, () => { if (_browser.Selected is { } tab) _pages.CoreOf(tab)?.OpenDevToolsWindow(); });
         Key(VirtualKey.P, Ctrl, () => { if (_browser.Selected is { } tab) _pages.CoreOf(tab)?.ShowPrintUI(Microsoft.Web.WebView2.Core.CoreWebView2PrintDialogKind.Browser); });
+        Key(VirtualKey.H, Ctrl, () => TogglePanel(PanelKind.History));
+        Key(VirtualKey.J, Ctrl, () => TogglePanel(PanelKind.Downloads));
+        Key(VirtualKey.O, CtrlShift, () => TogglePanel(PanelKind.Bookmarks));
+        Key(VirtualKey.L, CtrlShift, () => TogglePanel(PanelKind.Passwords));
+        Key(VirtualKey.D, Ctrl, ToggleBookmark);
+        Key(VirtualKey.H, CtrlShift, ToggleHiding);
+        Key(VirtualKey.U, CtrlShift, () => TogglePanel(PanelKind.Hidden));
+        Key(VirtualKey.F9, VirtualKeyModifiers.None, () => _ = ToggleReading());
         Key(VirtualKey.Escape, VirtualKeyModifiers.None, PutAway, always: false);
         // Tab is XAML's for moving focus before any accelerator sees it, so Ctrl+Tab is taken on the way down.
         Root.PreviewKeyDown += (_, e) =>
@@ -118,10 +126,12 @@ public sealed partial class MainWindow
         return true;
     }
 
-    /// Esc puts away whatever is open: find, then the field's list.
+    /// Esc puts away whatever is open: find, a panel, then full screen.
     private void PutAway()
     {
+        if (_picking is not null) { StopPicking(); return; }
         if (FindBar.Visibility == Visibility.Visible) { CloseFind(); return; }
+        if (_panel != PanelKind.None) { ClosePanel(); return; }
         if (_fullScreen) SetFullScreen(false);
     }
 

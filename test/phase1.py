@@ -35,6 +35,13 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     press = lambda keys: ask({"do": "press", "keys": keys})
     type_in = lambda text, into="field": ask({"do": "type", "text": text, "into": into})
     tabs, probe = app.tabs, app.probe
+    def trace(label):
+        if not os.environ.get("SEARCH_TRACE_BINDING"): return
+        live = [t for t in tabs() if not t["asleep"]]
+        if not live: print("trace", label, "no live tab"); return
+        t0 = live[0]; before = t0["heard"]
+        ask({"do": "world", "id": t0["id"], "expression": "__searchSend({kind: \"ping\"}), 1"})
+        print("trace", label, t0["id"], "heard" if until(lambda: next(t for t in tabs() if t["id"] == t0["id"])["heard"] > before, 3) else "LOST")
 
     # The bench
     tid = ask({"do": "open", "url": f"{base}/form"})["id"]
@@ -50,10 +57,12 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     check("bench close all", ask({"do": "close", "id": "all"}).get("closed") == 1)
     check("bench unknown tab is an error", "error" in ask({"do": "text", "id": "ffffffff"}))
 
+    trace("The field")
     # The field
     press("ctrl+l"); type_in(f"{base}/"); press("enter")
     check("address typed and gone to", until(lambda: tabs()[0]["url"] == f"http://{base}/"), tabs())
     check("title arrives", until(lambda: tabs()[0]["title"] == "Home page"))
+    trace("after first page")
     press("ctrl+t")
     check("ctrl+t: new tab, field has the keys", len(tabs()) == 2 and probe()["field"], probe())
     type_in("127.0.0.1:")
@@ -76,6 +85,7 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     press("enter")
     check("and switched to", until(lambda: probe()["selected"] == tabs()[1]["id"]) and len(tabs()) == 3, (probe()["selected"], tabs()))
 
+    trace("Tabs by key")
     # Tabs by key
     press("ctrl+3"); press("ctrl+w")
     check("ctrl+w closes", until(lambda: len(tabs()) == 2), tabs())
@@ -93,6 +103,7 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     check("ctrl+shift+k duplicates", until(lambda: len(tabs()) == 4 and tabs()[3]["url"] == tabs()[2]["url"]), tabs())
     press("ctrl+w")
 
+    trace("Find")
     # Find
     press("ctrl+1")
     until(lambda: not tabs()[0]["loading"])
@@ -107,6 +118,7 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     press("esc")
     check("esc closes find", until(lambda: not probe()["find"]))
 
+    trace("Layout")
     # Layout
     press("ctrl+shift+s")
     check("tabs across the top", until(lambda: probe()["sidebar"] is False))
@@ -115,24 +127,28 @@ with App("phase1", PAGES, settings=LOCAL_SEARCH) as app:
     press("ctrl+s")
     check("column back", until(lambda: probe()["folded"] is False))
 
+    trace("Private tab")
     # Private tab
     press("ctrl+shift+n"); type_in(f"{base}/second"); press("enter")
     check("private tab", until(lambda: tabs()[-1]["private"] and tabs()[-1]["title"] == "Second page"), tabs()[-1:])
 
+    trace("Real keys")
     # Real keys, through Windows, while a page has the keyboard
     if "--keys" in sys.argv:
-        press("ctrl+1"); until(lambda: probe()["selected"] == tabs()[0]["id"]); app.front()
+        # As a person would: the window to the front, then a click into the page, so the page has the keyboard.
+        press("ctrl+1"); until(lambda: probe()["selected"] == tabs()[0]["id"]); app.click()
         count = len(tabs())
         app.keys("ctrl", "t")
-        check("os keys: ctrl+t from a page", until(lambda: len(tabs()) == count + 1), tabs())
+        ok = until(lambda: len(tabs()) == count + 1)
+        check("os keys: ctrl+t from a page", ok, (tabs(), probe()["focused"]))
         app.keys("ctrl", "w")
         check("os keys: ctrl+w from the field", until(lambda: len(tabs()) == count), tabs())
-        app.keys("ctrl", "1"); app.keys("ctrl", "tab")
+        app.keys("ctrl", "1"); app.click(); app.keys("ctrl", "tab")
         check("os keys: ctrl+tab from a page", until(lambda: probe()["selected"] == tabs()[1]["id"]), probe()["selected"])
-        app.keys("ctrl", "shift", "s")
+        app.click(); app.keys("ctrl", "shift", "s")
         check("os keys: ctrl+shift+s from a page", until(lambda: probe()["sidebar"] is False))
         app.keys("ctrl", "shift", "s")
-        app.keys("ctrl", "f")
+        app.click(); app.keys("ctrl", "f")
         check("os keys: ctrl+f from a page", until(lambda: probe()["find"]))
         app.keys("esc")
 

@@ -124,6 +124,46 @@ Each phase ends with a build someone can use every day for what it covers.
 
 **Phase 2 — Daily driver.** Shield; Curtain (hide elements) and site styles; reading mode; bookmarks, history, and downloads panels; passwords (save after a successful sign-in, offer under the field) and passkeys; site card with permissions; notifications; default-browser registration and links from other apps; Velopack updater and a signed installer. **First outside build here.**
 
+*Phase 2 status (2026-11-21): built.* `python test/phase2.py` runs 43 checks against the dev build in its own test world, and they pass. Phase 1's suite still passes, and Core and Engine have 297 unit tests. Built:
+- **Shield.**
+- **Panels:** history (Ctrl+H), downloads (Ctrl+J), bookmarks (Ctrl+Shift+O), passwords (Ctrl+Shift+L) and what's hidden on this site (Ctrl+Shift+U). Downloads go to our own panel rather than Edge's flyout, and finished ones are remembered.
+- **Bookmarks:** Ctrl+D, in the address field's suggestions, and import/export of the HTML bookmarks file.
+- **Hiding:** hide an element (Ctrl+Shift+H), kept before first paint, and your own style for a site.
+- **Reading mode:** F9, in place.
+- **Passwords:** saved once a sign-in has worked, in a DPAPI vault; offered under the box and filled only on your choice, from the isolated world; copied from the panel after Windows Hello.
+- **Site card and permissions:** questions over the page, answers kept per site, never for private tabs.
+- **Notifications:** posted as Windows toasts, kept for the bench in test runs.
+- **Default-browser registration and links from other apps.**
+- **Updates and installer:** Velopack.
+
+The Setup.exe is **82 MB**, against a target under 20 MB. The 181 MB published app is mostly the bundled .NET runtime and the 25 MB Windows SDK projection, after referencing only the Windows App SDK parts Search uses, which already cut it from 105 MB. Next, try trimming, or depend on the .NET and Windows App runtimes being installed (Velopack can install them).
+
+Not done yet: zoom, the public suffix list, the bookmarks bar, a real icon and name, signing, and a published release.
+
+*Phase 2 findings (2026-11-21):*
+- **New-document scripts run before `<html>` exists.** `forms.js` observed `document.documentElement`, threw at document start and never defined itself; observe `document` instead.
+- **Search's own scripts run in an isolated world** (`World.cs`), the stand-in for `WKContentWorld`, set up through the DevTools protocol.
+  - `Page.addScriptToEvaluateOnNewDocument` with a `worldName` runs the scripts. It needs `Page.enable`; without it they silently never run.
+  - Messages come out through `Runtime.addBinding`, attached to each new document's world context, which the window gets from `Page.createIsolatedWorld`.
+  - `Runtime.enable` is never sent: anti-bot checks look for its side effects, and without it a binding can't be given to a world by name.
+  - The page shares the DOM but can't see the scripts' globals, listeners or messages. Passwords are filled from here.
+  - Page keys now go through this channel too.
+- **Hold every WinRT event source you subscribe to.** A `CoreWebView2DevToolsProtocolEventReceiver` (or `core.Find`) that nothing references gets collected, and its subscription with it. That happened at the next garbage collection, typically when another web view was built, and at first looked like a private-tab bug.
+- **Private tabs have a WebView2 environment of their own**: a separate browser process and data folder, emptied at launch, with an InPrivate profile per tab.
+- **Shield is a built-in extension**, written at launch:
+  - declarativeNetRequest rules for the Mac's third-party list and YouTube's ad paths;
+  - a content-script stylesheet for ad slots, plus the per-site ones;
+  - an `allowAllRequests` rule for each paused site.
+  - It's installed fresh in each profile once per launch, since WebView2 can't report an installed extension's version.
+  - YouTube's two scripts go in the page world and Search's world, replaced when pauses change.
+- **Zoom is still open.** DevTools device-metrics emulation behaves like real zoom (`devicePixelRatio` 1.25, `innerWidth` 1132→906), but `Page.captureScreenshot` then hangs. A dispatched Ctrl+wheel does nothing. Real Ctrl+wheel and pinch work.
+- **No public suffix list on Windows.** `Registrable` takes the test as a parameter; without a list, only the exact host counts as the same site, so passwords are offered on fewer pages, never more. Bundling publicsuffix.org's list is a decision to make.
+- **Default browser:** Windows never lets an app make itself the default. The installer registers Search for the current user, and Settings opens Windows' own page on its entry. Test runs never touch the registry.
+- **Links from other apps:** one instance per world (`AppInstance`). A second launch hands its links over and leaves.
+- **Updates and installer:** Velopack. `packaging/pack.ps1` builds Setup.exe and the update packages, signed when `SEARCH_SIGN_PARAMS` is set. The app checks GitHub releases of `Updater.Releases` once a day and applies a download at the next launch.
+  - Publishing a release is a separate, deliberate step.
+  - The fork needs its own name and icon before any release goes out (README).
+
 **Phase 3 — The Arc layer.** Spaces (colours, gradients, routes, swipe); pins and pin folders; tab groups; Split View (up to 4); peek; the little window; Ctrl+Tab switcher; fold; side panel; sleep and archive; floating video.
 
 **Phase 4 — Extensions (smaller after spike 1).** Web Store install with CRX3 verification, the puzzle menu and pinning, popups, site access, unpacked + reload, native messaging.

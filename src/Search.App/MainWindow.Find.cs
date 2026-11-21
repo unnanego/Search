@@ -13,6 +13,8 @@ namespace Search.App;
 public sealed partial class MainWindow
 {
     private CoreWebView2? _finding;
+    /// The find object whose events we listen to, held so its wrapper isn't collected with our subscriptions.
+    private CoreWebView2Find? _finder;
     /// One find at a time: each letter typed asks again, and overlapping starts raced each other into "2 of 3".
     private bool _findRunning, _findAgain;
     /// The word last searched for: TextChanged arrives late, and the same word again must not start over.
@@ -58,8 +60,9 @@ public sealed partial class MainWindow
         {
             _finding?.Find.Stop();
             _finding = core;
-            core.Find.MatchCountChanged += (_, _) => Count(core);
-            core.Find.ActiveMatchIndexChanged += (_, _) => Count(core);
+            _finder = core.Find;
+            _finder.MatchCountChanged += (_, _) => Count(core);
+            _finder.ActiveMatchIndexChanged += (_, _) => Count(core);
         }
         // A new word starts again from the top; without this each letter typed went on from the last match.
         core.Find.Stop();

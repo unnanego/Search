@@ -67,7 +67,9 @@ public sealed partial class MainWindow
             .Where(t => t != _browser.Selected && t.Url is not null && (t.Shown.Contains(needle, StringComparison.OrdinalIgnoreCase) || t.Url.AbsoluteUri.Contains(needle, StringComparison.OrdinalIgnoreCase)))
             .Take(OpenTabsOffered)
             .Select(t => new Suggestion(Search.Core.Address.Editable(t.Url!), t.Shown, t.Url!, SuggestionKind.Open) { Tab = t.Id }));
-        var visited = _history.Suggestions(words);
+        var marked = BookmarkOffers(words).Where(b => offers.All(o => o.Url != b.Url)).ToList();
+        offers.AddRange(marked);
+        var visited = _history.Suggestions(words).Where(v => marked.All(b => History.Identity(b.Url) != History.Identity(v.Url))).ToList();
         offers.AddRange(visited);
         var search = new Suggestion(words, "Search " + SearchName, SearchFor(words), SuggestionKind.Search);
         // Words that can't be an address put the search first; an address puts it last.

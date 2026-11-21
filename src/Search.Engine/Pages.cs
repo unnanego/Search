@@ -19,6 +19,10 @@ public sealed class Pages
     private readonly Dictionary<Tab, Task<WebView2>> _building = new();
     private Theme _theme;
 
+    /// A page finished loading in any tab, bench and private ones included: for what reads the page (sign-ins).
+    public event Action<Tab>? Loaded;
+    /// A tab's web view let go of, because the tab closed or slept.
+    public event Action<Tab>? Released;
     /// A page finished loading in an ordinary tab: for the history.
     public event Action<Tab, Uri, string>? Visited;
     public event Action<Tab, string>? TitleChanged;
@@ -26,12 +30,56 @@ public sealed class Pages
     public event Action<Tab, bool>? FullScreen;
     /// One of the window's keys pressed while a page had the keyboard, by name ("ctrl+t").
     public event Action<Tab, string>? KeyPressed;
+    /// A page asked for something only you can give it (the camera, where you are, notifications). The window answers;
+    /// the request waits on its deferral until it does.
+    public event Action<Tab, CoreWebView2PermissionRequestedEventArgs, Windows.Foundation.Deferral>? PermissionAsked;
+    /// A page sent a notification. WebView2 shows none of its own; the window posts it, or keeps it in a test run.
+    public event Action<Tab, CoreWebView2Notification>? Notified;
+    /// A download began. WebView2's own downloads flyout is kept away; the window shows its own.
+    public event Action<Tab, CoreWebView2DownloadOperation>? DownloadStarted;
+    /// Anything else Search's own scripts in a page say (see World): its kind, and the message.
+    public event Action<Tab, string, JsonElement>? Message;
 
     /// The window's keys, by name. A web view keeps the keyboard in its own process and WinUI hands none of it to the
     /// window, so each page gets a listener at document start that passes these keys, and only these, to the window.
     public IReadOnlyCollection<string> Keys { get; set; } = [];
-    /// Marks the listener's messages: a page can post to the window too, but can't read the listener's closure.
-    private readonly string _keyToken = Guid.NewGuid().ToString("N");
+
+    private readonly Dictionary<Tab, World> _worlds = new();
+    private readonly Dictionary<Tab, (string? Page, string? Skipper)> _youtube = new();
+    private bool _shieldOn = true;
+    private IReadOnlyCollection<string> _shieldPaused = [];
+
+    /// Shield on or off, and the sites it's paused on: every profile and every page told.
+    public async Task SetShield(bool on, IReadOnlyCollection<string> paused)
+    {
+        (_shieldOn, _shieldPaused) = (on, paused.ToList());
+        await Shield.Update(_views.Values.Select(v => v.CoreWebView2.Profile), on, _shieldPaused);
+        foreach (var (tab, view) in _views) await YouTube(tab, view.CoreWebView2);
+    }
+
+    /// YouTube's two scripts (Shield.cs), put in again for the pauses as they are now.
+    private async Task YouTube(Tab tab, CoreWebView2 core)
+    {
+        if (_youtube.Remove(tab, out var old))
+        {
+            if (old.Page is { } page) core.RemoveScriptToExecuteOnDocumentCreated(page);
+            if (old.Skipper is { } skipper && _worlds.TryGetValue(tab, out var w)) await w.Remove(skipper);
+        }
+        if (!_shieldOn || !_worlds.TryGetValue(tab, out var world)) return;
+        _youtube[tab] = (await core.AddScriptToExecuteOnDocumentCreatedAsync(Shield.YouTubePage(_shieldPaused)), await world.Add(Shield.YouTubeSkipper(_shieldPaused)));
+    }
+    private readonly List<string> _scripts = new();
+
+    /// A script of Search's own for every page, in the isolated world: those open now and those to come.
+    public void AddScript(string source)
+    {
+        _scripts.Add(source);
+        foreach (var world in _worlds.Values) _ = world.Add(source);
+    }
+
+    /// Runs an expression in a tab's isolated world; null if the tab has no web view or the page no world yet.
+    public Task<System.Text.Json.Nodes.JsonNode?> Evaluate(Tab tab, string expression) =>
+        _worlds.TryGetValue(tab, out var world) ? world.Evaluate(expression) : Task.FromResult<System.Text.Json.Nodes.JsonNode?>(null);
 
     public Pages(Browser browser, Grid stage)
     {
@@ -89,21 +137,29 @@ public sealed class Pages
         // A web view takes the keyboard when it starts; whoever had it (the field, as you type) gets it back.
         var focused = _stage.XamlRoot is { } root ? FocusManager.GetFocusedElement(root) as Control : null;
         _stage.Children.Insert(0, view);
-        var environment = await Web.Environment;
         if (tab.Private)
         {
-            // A profile of its own, InPrivate, per tab: its own cookie jar, gone when the tab closes.
+            // In private tabs' own browser (Web.Private), InPrivate, a profile per tab: its own cookie jar, gone when
+            // the tab closes.
+            var environment = await Web.Private;
             var options = environment.CreateCoreWebView2ControllerOptions();
             options.IsInPrivateModeEnabled = true;
             options.ProfileName = "private-" + tab.ShortId;
             await view.EnsureCoreWebView2Async(environment, options);
         }
-        else await view.EnsureCoreWebView2Async(environment);
+        else await view.EnsureCoreWebView2Async(await Web.Environment);
         var core = view.CoreWebView2;
         Privacy.Apply(core.Settings);
+        // A test run downloads into its own world, never into the Downloads folder of whoever runs it.
+        if (Store.Testing) core.Profile.DefaultDownloadFolderPath = Store.File("Downloads");
         Paint(core);
         Wire(tab, core);
-        await core.AddScriptToExecuteOnDocumentCreatedAsync(KeyListener());
+        var world = await World.Open(core, _scripts.Prepend(KeyListener()));
+        world.Message += (kind, body) => OnMessage(tab, kind, body);
+        _worlds[tab] = world;
+        // The ad blocker before the first request, as the Mac holds the first loads until its list is ready.
+        await Shield.Protect(core.Profile, _shieldOn, _shieldPaused);
+        await YouTube(tab, core);
         _views[tab] = view;
         _building.Remove(tab);
         tab.Live = true;
@@ -132,13 +188,20 @@ public sealed class Pages
         core.HistoryChanged += (_, _) => { tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward; };
         core.FaviconChanged += (_, _) => tab.Icon = string.IsNullOrEmpty(core.FaviconUri) ? null : core.FaviconUri;
         core.ContainsFullScreenElementChanged += (_, _) => FullScreen?.Invoke(tab, core.ContainsFullScreenElement);
-        core.WebMessageReceived += (_, e) => OnKeyMessage(tab, e.WebMessageAsJson);
-        // Keys pressed inside a frame (an embedded editor, a video) come through the frame's own channel.
-        core.FrameCreated += (_, e) => e.Frame.WebMessageReceived += (_, m) => OnKeyMessage(tab, m.WebMessageAsJson);
+        core.DownloadStarting += (_, e) => { e.Handled = true; DownloadStarted?.Invoke(tab, e.DownloadOperation); };
+        core.PermissionRequested += (_, e) =>
+        {
+            // Asked of WebView2's own question only when nobody in the window is listening.
+            if (PermissionAsked is null) return;
+            e.Handled = true;
+            PermissionAsked(tab, e, e.GetDeferral());
+        };
+        core.NotificationReceived += (_, e) => { e.Handled = true; Notified?.Invoke(tab, e.Notification); };
         core.NavigationCompleted += (_, e) =>
         {
             tab.Loading = false;
             tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward;
+            if (e.IsSuccess) Loaded?.Invoke(tab);
             // Bench and private tabs never enter the history.
             if (e.IsSuccess && !tab.Bench && !tab.Private && Uri.TryCreate(core.Source, UriKind.Absolute, out var url)) Visited?.Invoke(tab, url, core.DocumentTitle);
         };
@@ -158,17 +221,14 @@ public sealed class Pages
     }
 
     /// Capture phase, at the window, before anything the page adds; real key presses only (isTrusted), so a page can't
-    /// press the window's keys by dispatching events; layout-independent names from KeyboardEvent.code.
+    /// press the window's keys by dispatching events; names from KeyboardEvent.code, or keyCode where there's no code
+    /// (an on-screen keyboard, some remote sessions), so the layout never matters. It runs in the isolated world: the
+    /// page can't see it, and only it can reach the window.
     private string KeyListener() => $$"""
         (() => {
-          const token = {{JsonSerializer.Serialize(_keyToken)}}, keys = new Set({{JsonSerializer.Serialize(Keys)}});
-          const view = window.chrome && window.chrome.webview;
-          if (!view) return;
-          const post = view.postMessage.bind(view);
+          const keys = new Set({{JsonSerializer.Serialize(Keys)}});
           const named = { BracketLeft: '[', BracketRight: ']', Comma: ',', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
                           PageUp: 'pageup', PageDown: 'pagedown', Tab: 'tab', Escape: 'esc', Enter: 'enter', Equal: '=', Minus: '-' };
-          // By the key's place (code); where there is none (an on-screen keyboard, some remote sessions), by keyCode,
-          // which is the virtual key and so the same whatever the layout.
           const byCode = { 9: 'tab', 13: 'enter', 27: 'esc', 33: 'pageup', 34: 'pagedown', 37: 'left', 38: 'up', 39: 'right', 40: 'down', 187: '=', 188: ',', 189: '-', 219: '[', 221: ']' };
           const fromKeyCode = k => k >= 65 && k <= 90 ? String.fromCharCode(k + 32) : k >= 48 && k <= 57 ? String(k - 48) : k >= 112 && k <= 135 ? 'f' + (k - 111) : byCode[k] || '';
           const name = e => { const c = e.code || ''; return c.startsWith('Key') ? c.slice(3).toLowerCase() : c.startsWith('Digit') ? c.slice(5) : named[c] || (c ? c.toLowerCase() : fromKeyCode(e.keyCode)); };
@@ -177,23 +237,20 @@ public sealed class Pages
             const combo = [e.ctrlKey && 'ctrl', e.shiftKey && 'shift', e.altKey && 'alt', name(e)].filter(Boolean).join('+');
             if (!keys.has(combo)) return;
             e.preventDefault(); e.stopImmediatePropagation();
-            post({ search: token, combo });
+            __searchSend({ kind: 'key', combo });
           }, true);
         })();
         """;
 
-    private void OnKeyMessage(Tab tab, string json)
-    {
-        try
-        {
-            using var message = JsonDocument.Parse(json);
-            if (message.RootElement.ValueKind == JsonValueKind.Object && message.RootElement.TryGetProperty("search", out var token) && token.GetString() == _keyToken
-                && message.RootElement.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && Keys.Contains(name))
-                KeyPressed?.Invoke(tab, name);
-        }
-        catch (JsonException) { }
-    }
+    /// World messages heard per tab, for tests.
+    public Dictionary<Tab, int> Heard { get; } = new();
 
+    private void OnMessage(Tab tab, string kind, JsonElement body)
+    {
+        Heard[tab] = Heard.GetValueOrDefault(tab) + 1;
+        if (kind != "key") { Message?.Invoke(tab, kind, body); return; }
+        if (body.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && Keys.Contains(name)) KeyPressed?.Invoke(tab, name);
+    }
     private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) core.Navigate(url.AbsoluteUri); }
 
     private void Command(Tab tab, TabCommand command)
@@ -214,12 +271,15 @@ public sealed class Pages
     public void Sleep(Tab tab)
     {
         if (!_views.Remove(tab, out var view)) return;
+        _worlds.Remove(tab);
+        _youtube.Remove(tab);
         tab.NavigateRequested -= Navigate;
         tab.CommandRequested -= Command;
         tab.Live = false;
         tab.Loading = false;
         _stage.Children.Remove(view);
         view.Close();
+        Released?.Invoke(tab);
     }
 
     /// A script's value back as a .NET string, or null.

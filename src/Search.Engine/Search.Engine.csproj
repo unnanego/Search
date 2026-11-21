@@ -10,8 +10,19 @@
     <WindowsPackageType>None</WindowsPackageType>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Base" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" />    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Scripts that run in pages, kept as .js so they can be read and linted as what they are. -->
+    <EmbeddedResource Include="Scripts\**\*.js" LogicalName="Search.Engine.Scripts.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Search.Core\Search.Core.csproj" />

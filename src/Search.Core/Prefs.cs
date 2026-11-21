@@ -14,6 +14,8 @@ public sealed class Prefs : Observable
     private Theme _theme;
     private string _engine = "google", _customEngine = "";
     private double _columnWidth = 240;
+    private bool _shield = true, _savePasswords = true, _siteStyles;
+    private List<string> _shieldPaused = [];
 
     /// Tabs down the left (a new install's choice, as on the Mac) or across the top.
     public bool TabsOnSide { get => _tabsOnSide; set { if (Set(ref _tabsOnSide, value)) Save(); } }
@@ -23,6 +25,27 @@ public sealed class Prefs : Observable
     public string Engine { get => _engine; set { if (Set(ref _engine, value)) Save(); } }
     public string CustomEngine { get => _customEngine; set { if (Set(ref _customEngine, value)) Save(); } }
     public double ColumnWidth { get => _columnWidth; set { if (Set(ref _columnWidth, Math.Clamp(value, 160, 480))) Save(); } }
+    /// Settings › Passwords: offer to keep a sign-in once it has worked.
+    public bool SavePasswords { get => _savePasswords; set { if (Set(ref _savePasswords, value)) Save(); } }
+    /// Your own CSS for a site, as Arc's Boosts: off until turned on, as on the Mac.
+    public bool SiteStyles { get => _siteStyles; set { if (Set(ref _siteStyles, value)) Save(); } }
+    /// The ad blocker, on unless turned off.
+    public bool Shield { get => _shield; set { if (Set(ref _shield, value)) Save(); } }
+    /// Sites the ad blocker is off for: the ones it broke.
+    public List<string> ShieldPaused { get => _shieldPaused; set { _shieldPaused = value ?? []; Changed(); } }
+
+    public bool ShieldPausedOn(string? host) => host is not null && _shieldPaused.Contains(Site(host));
+    public void PauseShield(string host, bool off)
+    {
+        var site = Site(host);
+        if (off == _shieldPaused.Contains(site)) return;
+        if (off) _shieldPaused.Add(site); else _shieldPaused.Remove(site);
+        _shieldPaused.Sort(StringComparer.Ordinal);
+        Changed(nameof(ShieldPaused));
+        Save();
+    }
+    private static string Site(string host) => host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..].ToLowerInvariant() : host.ToLowerInvariant();
+
     /// Settings › General › Let a script drive Search: the bench socket.
     public bool Bench { get => _bench; set { if (Set(ref _bench, value)) Save(); } }
 

@@ -1,9 +1,18 @@
 <Project>
   <ItemGroup>
     <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
+    <!-- The parts of the Windows App SDK Search uses; the whole SDK also brings AI, ML, Search and Widgets (~50 MB). -->
+    <PackageVersion Include="Microsoft.WindowsAppSDK.Base" Version="2.7.0" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK.Foundation" Version="2.7.0" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.7.0" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK.WinUI" Version="2.7.0" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK.DWrite" Version="2.7.0" />
+    <PackageVersion Include="Microsoft.WindowsAppSDK.Runtime" Version="2.7.0" />
     <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
     <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="11.0.0" />
+    <PackageVersion Include="Velopack" Version="1.2.161" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />

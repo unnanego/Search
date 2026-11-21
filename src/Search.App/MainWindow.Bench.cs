@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Search.Bench;
 using Search.Core;
 using Search.Engine;
@@ -55,7 +56,7 @@ public sealed partial class MainWindow
             case "probe":
                 return Probe();
             // Test runs only, as on the Mac: a key as the window takes it, and typing into the field or find.
-            case "press" or "type" or "select" when !Store.Testing:
+            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" when !Store.Testing:
                 return BenchServer.Error($"{Text("do")} only works on a --test run");
             case "press":
                 if (Text("keys") is not { } combo) return BenchServer.Error("press needs keys, e.g. ctrl+t");
@@ -63,8 +64,27 @@ public sealed partial class MainWindow
                 return Press(combo) ? new JsonObject { ["ok"] = true, ["focusedBefore"] = before } : BenchServer.Error($"nothing answers {combo} (focus: {before})");
             case "type":
                 if (Text("text") is not { } words) return BenchServer.Error("type needs text");
-                TypeInto(Text("into") == "find" ? FindText : FieldText, words);
+                TypeInto(Text("into") switch { "find" => FindText, "panel" => PanelSearch, _ => FieldText }, words);
                 await Task.Delay(50);
+                return new JsonObject { ["ok"] = true };
+            case "answer":
+                if (_asking is null) return BenchServer.Error("nothing is being asked");
+                Answer(Flag("allow"));
+                return new JsonObject { ["ok"] = true };
+            case "keep":
+                if (_keeping is null) return BenchServer.Error("nothing is offered for keeping");
+                AnswerKeeping(Text("answer") ?? "later");
+                return new JsonObject { ["ok"] = true };
+            case "pick":
+                if (LoginRows.ItemsSource is not IList<PanelRow> rows || Logins.Visibility != Visibility.Visible) return BenchServer.Error("no accounts are offered");
+                var index = (int)(Number("index") ?? 0);
+                if (index < 0 || index >= rows.Count || rows[index].Item is not Search.Core.Account account) return BenchServer.Error("no such account");
+                _loginsShown = DateTime.UtcNow.AddSeconds(-1);
+                await Pick(account);
+                return new JsonObject { ["ok"] = true };
+            case "panelaction":
+                if (PanelRows.ItemsSource is not IList<PanelRow> panelRows || (int)(Number("index") ?? 0) is var at && (at < 0 || at >= panelRows.Count)) return BenchServer.Error("no such panel row");
+                OnPanelRowAction(new Button { Tag = panelRows[at] }, new RoutedEventArgs());
                 return new JsonObject { ["ok"] = true };
             case "select":
                 if (Text("id") is not { } which || _browser.Ordinary.FirstOrDefault(t => t.ShortId.StartsWith(which, StringComparison.OrdinalIgnoreCase)) is not { } chosen) return BenchServer.Error("select needs the id of an ordinary tab");
@@ -98,6 +118,14 @@ public sealed partial class MainWindow
                 var page = (await _pages.Ensure(found)).CoreWebView2;
                 var script = $"(()=>{{const el=document.querySelector({JsonSerializer.Serialize(selector)});if(!el)return false;el.scrollIntoView({{block:'center'}});el.focus();el.click();return true}})()";
                 return await page.ExecuteScriptAsync(script) == "true" ? new JsonObject { ["ok"] = true } : BenchServer.Error($"nothing matches {selector}");
+            case "cdp" when Store.Testing:
+                if (Text("method") is not { } method) return BenchServer.Error("cdp needs a method");
+                var cdpCore = (await _pages.Ensure(found)).CoreWebView2;
+                return new JsonObject { ["value"] = JsonNode.Parse(await cdpCore.CallDevToolsProtocolMethodAsync(method, request["params"]?.ToJsonString() ?? "{}")) };
+            case "world" when Store.Testing:
+                if (Text("expression") is not { } expression) return BenchServer.Error("world needs an expression");
+                await _pages.Ensure(found);
+                return new JsonObject { ["value"] = (await _pages.Evaluate(found, expression))?.DeepClone() };
             case "close":
                 if (!found.Bench) return BenchServer.Error("not a bench tab — only tabs the bench opened can be closed from here");
                 _browser.Close(found);
@@ -113,7 +141,7 @@ public sealed partial class MainWindow
     private JsonObject Describe(Tab tab) => new()
     {
         ["id"] = tab.ShortId, ["url"] = tab.Url?.AbsoluteUri, ["title"] = tab.Title, ["name"] = tab.Name, ["loading"] = tab.Loading,
-        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? ""
+        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? "", ["heard"] = _pages.Heard.GetValueOrDefault(tab)
     };
 
     /// A picture of the page, through Chromium's own capture, which works whether or not the tab is in front.
@@ -153,6 +181,14 @@ public sealed partial class MainWindow
         ["focused"] = Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot)),
         ["findRaw"] = _finding is { } f ? new JsonArray(f.Find.MatchCount, f.Find.ActiveMatchIndex) : null,
         ["fullScreen"] = _fullScreen,
+        ["panel"] = _panel.ToString().ToLowerInvariant(),
+        ["asking"] = _asking is { } asking ? AskingText.Text : null,
+        ["keeping"] = Keeping.Visibility == Visibility.Visible ? KeepingText.Text : null,
+        ["logins"] = new JsonArray((LoginRows.ItemsSource as IEnumerable<PanelRow> ?? []).Where(_ => Logins.Visibility == Visibility.Visible).Select(r => (JsonNode)JsonValue.Create(r.Title)!).ToArray()),
+        ["bookmarks"] = _bookmarks.Count,
+        ["fieldNote"] = _fieldNote,
+        ["notifications"] = new JsonArray(_posted.Select(p => (JsonNode)new JsonObject { ["site"] = p.Site, ["title"] = p.Title, ["body"] = p.Body }).ToArray()),
+        ["panelRows"] = new JsonArray((PanelRows.ItemsSource as IEnumerable<PanelRow> ?? []).Select(r => (JsonNode)new JsonObject { ["title"] = r.Title, ["detail"] = r.Detail }).ToArray()),
         ["selected"] = _browser.Selected?.ShortId,
         ["tabs"] = _browser.Ordinary.Count(),
         ["windows"] = new JsonArray(new JsonObject { ["kind"] = "browser", ["title"] = Title, ["visible"] = AppWindow.IsVisible, ["frame"] = new JsonArray(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height) })

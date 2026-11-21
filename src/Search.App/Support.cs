@@ -17,7 +17,7 @@ public sealed class Offer(Suggestion suggestion)
     public Suggestion Suggestion { get; } = suggestion;
     public string Title => Suggestion.Kind == SuggestionKind.Search ? Suggestion.Key : Suggestion.Title is { Length: > 0 } t ? t : Suggestion.Key;
     public string Detail => Suggestion.Kind switch { SuggestionKind.Search => Suggestion.Title, SuggestionKind.Open => "Switch to tab · " + Suggestion.Key, _ => Suggestion.Key };
-    public string Glyph => Suggestion.Kind switch { SuggestionKind.Search => "", SuggestionKind.Open => "", _ => "" };
+    public string Glyph => Suggestion.Kind switch { SuggestionKind.Search => "", SuggestionKind.Open => "", SuggestionKind.Bookmark => "", _ => "" };
 }
 
 /// The window's ordinary tabs, without the bench's, as the column and the strip list them. Kept in step with the

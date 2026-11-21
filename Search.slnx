@@ -12,5 +12,8 @@
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Search.Core.Tests/Search.Core.Tests.csproj" />
+    <Project Path="test/Search.Engine.Tests/Search.Engine.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
   </Folder>
 </Solution>

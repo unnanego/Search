@@ -29,6 +29,7 @@ public sealed partial class MainWindow : Window
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 900));
         _row = new RowMirror(_browser);
         _pages = new Pages(_browser, Stage) { Theme = prefs.Theme };
+        _ = _pages.SetShield(prefs.Shield, prefs.ShieldPaused);
         Row.ItemsSource = _row.Items;
         Strip.ItemsSource = _row.Items;
         Row.SelectionChanged += OnRowSelectionChanged;
@@ -39,12 +40,17 @@ public sealed partial class MainWindow : Window
         _pages.Visited += (_, url, title) => _history.Record(url, title);
         _pages.TitleChanged += (tab, title) => { if (tab == _browser.Selected) Title = Shown(tab); if (!tab.Bench && !tab.Private && tab.Url is { } url) _history.Retitle(url, title); };
         _pages.FullScreen += (tab, on) => { if (tab == _browser.Selected) SetFullScreen(on); };
-        _prefs.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(Prefs.TabsOnSide) or nameof(Prefs.Folded) or nameof(Prefs.ColumnWidth)) Lay(); if (e.PropertyName == nameof(Prefs.Theme)) Paint(); if (e.PropertyName == nameof(Prefs.Bench)) Bench(); };
+        _prefs.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(Prefs.TabsOnSide) or nameof(Prefs.Folded) or nameof(Prefs.ColumnWidth)) Lay(); if (e.PropertyName == nameof(Prefs.Theme)) Paint(); if (e.PropertyName == nameof(Prefs.Bench)) Bench(); if (e.PropertyName is nameof(Prefs.Shield) or nameof(Prefs.ShieldPaused)) _ = _pages.SetShield(_prefs.Shield, _prefs.ShieldPaused); };
         WireField();
         WireKeys();
         _pages.Keys = PageKeys();
         _pages.KeyPressed += (tab, combo) => { if (tab == _browser.Selected) Press(combo); };
         WireFind();
+        WirePanels();
+        WireSite();
+        WirePasswords();
+        WireBookmarks();
+        WireCurtain();
         Lay();
         Paint();
         Restore();
@@ -61,6 +67,21 @@ public sealed partial class MainWindow : Window
     }
 
     private static string Describe(object? element) => element switch { FrameworkElement { Name.Length: > 0 } f => $"{f.GetType().Name} {f.Name}", null => "null", _ => element.GetType().Name };
+
+    /// A link from another app (Links.swift): its own tab, in front. (The Mac's small window for these is Phase 3.)
+    public void FromElsewhere(Uri link)
+    {
+        var tab = _browser.Selected is { Url: null, Private: false } empty ? empty : _browser.Open(link);
+        if (tab.Url is null) tab.Go(link);
+        _ = Front(tab, givePage: true);
+    }
+
+    /// The window to the front, as when Search is opened again while it's running.
+    public void Bring()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter) presenter.Restore();
+        Activate();
+    }
 
     private static string Shown(Tab tab) => tab.Private ? "Private — " + tab.Shown : tab.Shown;
 
