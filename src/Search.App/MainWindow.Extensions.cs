@@ -29,14 +29,18 @@ public sealed partial class MainWindow
     private readonly HashSet<long> _surfaceWindows = new();
     /// The install question on screen, which the bench can answer in a test run.
     private TaskCompletionSource<bool>? _confirming;
+    private readonly StackPanel _topEnd = new() { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+
+    /// Updates are looked for by one window for the app: the first one made.
+    private static bool _updatesWatched;
     private const string SideWidthKey = "sidepanel.width";
     public const string WebStore = "https://chromewebstore.google.com/category/extensions";
 
     private void WireExtensions()
     {
-        _extensions = new ExtensionHost(App.Notes);
+        _extensions = App.Shared.Extensions;
         _pages.Extensions = _extensions.Ready;
-        _extensions.Changed += () => DispatcherQueue.TryEnqueue(() => { DrawExtensions(); if (_panel == PanelKind.Extensions) FillPanel(); TellStores(); });
+        Hook<Action>(h => _extensions.Changed += h, h => _extensions.Changed -= h, () => DispatcherQueue.TryEnqueue(() => { DrawExtensions(); if (_panel == PanelKind.Extensions) FillPanel(); TellStores(); }));
         // A tab opened from a popup that's up takes it away, as Chrome's do; one opened while the bridge works out a
         // press (an onClicked opening a tab) leaves it to finish.
         _pages.SurfaceOpened += _ => { if (PopupShown) ClosePopup(); };
@@ -49,11 +53,12 @@ public sealed partial class MainWindow
         WireSideHandle();
         DrawExtensions();
         // Once a day at most, a while after launch; never by itself in a test run.
-        if (!Store.Testing)
+        if (!Store.Testing && !_updatesWatched)
         {
+            _updatesWatched = true;
             var later = DispatcherQueue.CreateTimer();
             later.Interval = TimeSpan.FromSeconds(30);
-            later.Tick += (_, _) => { later.Interval = TimeSpan.FromHours(1); _ = _extensions.CheckForUpdates(m => ConfirmInstall(m, updating: true)); };
+            later.Tick += (_, _) => { later.Interval = TimeSpan.FromHours(1); _ = _extensions.CheckForUpdates(m => (App.Acting ?? this).ConfirmInstall(m, updating: true)); };
             later.Start();
         }
     }
@@ -434,8 +439,11 @@ public sealed partial class MainWindow
     private void LayExtensions()
     {
         Detach(ExtensionsBar);
+        // Across the top, the agent's Stop line comes before the extensions' buttons, at the end of the tabs.
+        _topEnd.Children.Clear();
         if (_prefs.TabsOnSide) { ColumnExtensionsSlot.Child = ExtensionsBar; TopExtensionsSlot.Child = null; }
-        else { TopExtensionsSlot.Child = ExtensionsBar; ColumnExtensionsSlot.Child = null; }
+        else { _topEnd.Children.Add(ExtensionsBar); TopExtensionsSlot.Child = _topEnd; ColumnExtensionsSlot.Child = null; }
+        LayAgent(_topEnd);
         LaySide();
     }
 
@@ -484,7 +492,7 @@ public sealed partial class MainWindow
     // MARK: notices
 
     /// A word about what just happened, on the window's own notice card.
-    private void Notify(string text) { LastNotice = text; Notice(text); }
+    public void Notify(string text) { LastNotice = text; Notice(text); }
 
     /// For the bench.
     private string? LastNotice { get; set; }

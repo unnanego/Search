@@ -10,7 +10,7 @@ public enum Theme { System, Light, Dark }
 public sealed class Prefs : Observable
 {
     private static readonly JsonSerializerOptions _json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
-    private bool _tabsOnSide = true, _folded, _bench;
+    private bool _tabsOnSide = true, _folded, _bench, _agents;
     private Theme _theme;
     private string _engine = "google", _customEngine = "";
     private double _columnWidth = 240;
@@ -50,6 +50,23 @@ public sealed class Prefs : Observable
 
     /// Settings › General › Let a script drive Search: the bench socket.
     public bool Bench { get => _bench; set { if (Set(ref _bench, value)) Save(); } }
+
+    /// Settings › About › Developer › Let coding agents use Search (AgentServer). Off unless turned on there, which
+    /// leaves the mark it needs at launch (SwitchMark).
+    public bool Agents { get => _agents; set { if (Set(ref _agents, value)) Save(); } }
+    /// Found on at launch without the switch's mark, and put back to off: the window says so once.
+    [JsonIgnore] public bool AgentsRefused { get; private set; }
+
+    /// At launch, before anything listens: a setting some other program wrote, with no mark from the switch behind
+    /// it, is put back to off. A test run keeps what it was given.
+    public void CheckAgents(bool marked) => CheckAgents(marked, Store.Testing);
+
+    internal void CheckAgents(bool marked, bool testing)
+    {
+        if (!Agents || marked || testing) return;
+        AgentsRefused = true;
+        Agents = false;
+    }
 
     /// Reading the file sets every property; none of that is a change worth writing back.
     private static bool _reading;

@@ -35,6 +35,9 @@ public sealed class World
 
     public event Action<string, JsonElement>? Message;
 
+    /// The web view whose pages this world is in.
+    public CoreWebView2 Core => _core;
+
     private World(CoreWebView2 core) => _core = core;
 
     public static async Task<World> Open(CoreWebView2 core, IEnumerable<string> scripts)

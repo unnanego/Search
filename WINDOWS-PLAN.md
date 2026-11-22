@@ -245,6 +245,54 @@ Not done:
 
 **Phase 5 — Ecosystem.** Import from Chrome, Edge, Brave, Arc, Firefox, and Zen (tabs, bookmarks, history; passwords via CSV); profiles; multiple windows; folder Sync compatible with the Mac; `search-mcp` agent control with its trust prompts.
 
+*Phase 5 status (2026-11-22): built.* `python test/phase5.py` runs 57 checks in test worlds of its own and they pass: two worlds share one Sync folder as two computers would, a Chrome is laid out in the world's own Import folder, and the real `search-mcp` is run as an agent runs it. Phases 1–4 still pass; Core and Engine have 1,055 unit tests. Built:
+- **Several windows** (Windows.swift):
+  - Ctrl+N opens one in the space of the window in front, with an empty tab;
+  - each has its own tabs; settings, history, bookmarks, spaces, pins, extensions and the vault are shared (`Shared.cs`);
+  - the pins are the same in every window, through `pins.json` (Pins.swift);
+  - the oldest window of a profile keeps that profile's session files; the others are lines in `windows.json`, in the Mac's shape, and all come back after a restart;
+  - closing the oldest hands its files to the next; Ctrl+Shift+T brings back a closed window when it went after the last closed tab;
+  - Exit (Ctrl+Shift+Q) keeps every window. Closing windows one at a time forgets each, as in Chrome.
+- **Profiles** (Profiles.swift): Settings makes, renames and removes one, and opens a window of it.
+  - Each has its own spaces, tabs, pins, sign-ins (a WebView2 profile named by its id), history and bookmarks.
+  - The files are the Mac's: `profiles.json`, then `history-<id>.json` and the like beside Personal's.
+  - A window is one profile's for life, and says whose in its title once there are two. Until then nothing about profiles shows.
+- **Sync** (Sync.swift, SyncMerge.swift): on with any folder (OneDrive, Dropbox, a share), in the Mac's file format (`Search Sync/<scope>/<device>.json`), so a PC and a Mac can share one folder.
+  - A pass runs a second after launch, every 30 seconds, two seconds after a change, when another computer's file changes, and when a window comes to the front.
+  - It carries spaces, pins, bookmarks and the settings the Mac syncs. Settings Windows doesn't have yet are carried through untouched.
+- **Import** (Import*.swift): Chrome, Edge, Brave, Arc, Vivaldi, Opera, Chromium and their channels; Firefox, Zen, Floorp, LibreWolf, Waterfox.
+  - It brings bookmarks, history, passwords, the open tabs and their groups, Arc's and Zen's spaces and pins, and Web Store extensions.
+  - Counts come from the files alone; databases are copied first, as the browser usually has them open.
+  - Passwords: a DPAPI key and AES-GCM, as Chrome and Edge keep them; Firefox's key4.db; any browser's CSV export.
+  - Chrome 127's app-bound passwords are counted, and the sheet gives the steps to export them to a CSV.
+  - SQLite is Windows' own `winsqlite3.dll`, so nothing is added to the installer.
+- **Coding agents** (AgentControl, AgentTrust, AgentBanner, PageHands): off unless Settings turns it on.
+  - The pipe is `\\.\pipe\<folder>\agent`, for this user only.
+  - "<agent> wants to use Search" is answered by a pointer click alone, never a key or UI Automation, and never in its first half second.
+  - The agent works in tabs of its own, and sees yours only if you say so. A line at the foot of the column says who is using Search, with Stop.
+  - Every one of the Mac's verbs; clicks and keys are real input through DevTools; password, card and one-time-code values never leave the page.
+  - "Always allow" is offered only for `claude.exe` signed by Anthropic, checked with WinVerifyTrust and kept DPAPI-sealed.
+  - A setting some other program turned on is turned off at launch (a DPAPI mark, the keychain's stand-in).
+  - `search-mcp` speaks to the pipe on Windows; the Mac path is unchanged.
+
+What Phase 5 taught us:
+- **Two windows must never answer each other's pin changes.** Pin titles differ between windows (each pin's page is its own), so a window that reported pins on every write, after following another's, made two windows trade changes once a second and lose a pin. A window reports only a change made in it.
+- **Escape a file's slashes once.** A row inside `windows.json` was escaped by Session.Encode and again by the outer writer, so its addresses didn't parse on the way back.
+- **A session's address is the field's, not an agent's:** the field takes `127.0.0.1:port`, but an agent must give a whole `http://` address.
+
+Not done:
+- **Profiles in one window** (OneWindow.swift) and **the same tabs in every window** (Twins.swift). Folding (Ctrl+S) is still one setting for every window rather than each window's own.
+- **Deleting a removed profile's or space's WebView2 data from disk.** `Spaces.Erasing` lists them, but nothing deletes them yet.
+- **Import, untried on real browsers:** only test worlds were read, never this PC's own browsers. Arc, Comet, Naver Whale, Thorium and Opera's newer layout use paths not yet seen on a real install. An Arc profile doesn't yet become a Search profile.
+- **Sync, untried against a real Mac's folder.** The order of keys in the outer file follows Foundation's as best known; the items themselves don't depend on it.
+- **Agents:**
+  - "Always allow" is untried with Claude Code itself starting `search-mcp`. If a launcher such as `cmd.exe` or `py.exe` sits between them, it's never offered.
+  - DPAPI keeps out hand edits, not another program of yours.
+  - Agent tabs are bench tabs: you can't open one yet, and the working mark isn't drawn on a tab's icon (the Stop line names the tab instead).
+  - `bench-mcp` is still Mac-only.
+- **Not looked at on screen:** the Settings sections, the import sheet and the agent's question, which were checked only through the bench.
+- **The upstream triage** (section 5) wasn't done this phase.
+
 **Phase 6 — Later.** Local AI engine, translation, live folders, capture, launcher over any app, and whatever upstream adds meanwhile (triaged from `CHANGELOG.md` each phase).
 
 The heaviest phase is now 3 (the most UI). Spike 1 shrank phase 4 to UI, the `tabs`/`windows` shim, and testing real extensions.

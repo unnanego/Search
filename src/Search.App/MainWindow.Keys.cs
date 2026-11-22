@@ -22,7 +22,9 @@ public sealed partial class MainWindow
         Key(VirtualKey.N, CtrlShift, () => NewTab(@private: true));
         Key(VirtualKey.W, Ctrl, () => { if (_browser.Selected is { } tab) Close(tab); });
         Key(VirtualKey.F4, Ctrl, () => { if (_browser.Selected is { } tab) Close(tab); });
-        Key(VirtualKey.T, CtrlShift, () => _browser.Reopen());
+        Key(VirtualKey.N, Ctrl, () => App.NewWindow(this));
+        Key(VirtualKey.Q, CtrlShift, App.Quit);
+        Key(VirtualKey.T, CtrlShift, Reopen);
         Key(VirtualKey.Tab, Ctrl, () => _browser.Step(1));
         Key(VirtualKey.Tab, CtrlShift, () => _browser.Step(-1));
         Key(VirtualKey.PageDown, Ctrl, () => _browser.Step(1));

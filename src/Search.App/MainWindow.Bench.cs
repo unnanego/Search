@@ -14,22 +14,11 @@ namespace Search.App;
 public sealed partial class MainWindow
 {
     private const int TextLimit = 120_000;
-    private BenchServer? _bench;
+    /// A bench request for this window, answered on its own thread (App.Bench picks the window).
+    public Task<JsonObject> Bench(JsonObject request) => OnUi(() => Answer(request));
 
-    private void Bench()
-    {
-        if (_prefs.Bench && _bench is null)
-        {
-            _bench = new BenchServer(BenchServer.PipeFor(Store.Folder), request => OnUi(() => Answer(request)));
-            try { _bench.Start(); } catch (IOException e) { App.Log(e); _bench.Dispose(); _bench = null; } catch (UnauthorizedAccessException e) { App.Log(e); _bench.Dispose(); _bench = null; }
-        }
-        else if (!_prefs.Bench && _bench is not null)
-        {
-            _bench.Dispose();
-            _bench = null;
-            foreach (var tab in _browser.Tabs.Where(t => t.Bench).ToList()) _browser.Close(tab);
-        }
-    }
+    /// The bench turned off: its tabs go.
+    public void CloseBenchTabs() { foreach (var tab in _browser.Tabs.Where(t => t.Bench && !t.Agent).ToList()) _browser.Close(tab); }
 
     private Task<JsonObject> OnUi(Func<Task<JsonObject>> work)
     {
@@ -52,12 +41,64 @@ public sealed partial class MainWindow
                 await _pages.Ensure(opened);
                 return Describe(opened);
             case "tabs":
-                return new JsonObject { ["tabs"] = new JsonArray(_browser.Tabs.Where(t => t.Bench || Store.Testing).Select(t => (JsonNode)Describe(t)).ToArray()) };
+                return new JsonObject { ["tabs"] = new JsonArray(_browser.Tabs.Where(t => !t.Agent && (t.Bench || Store.Testing)).Select(t => (JsonNode)Describe(t)).ToArray()) };
             case "probe":
                 return Probe();
             // Test runs only, as on the Mac: a key as the window takes it, and typing into the field or find.
-            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" or "extensions" or "extinstall" or "extconfirm" or "extpress" or "extpopup" or "extpanel" or "extremove" or "extenable" or "extpin" or "extsites" or "extreload" or "extupdate" or "notice" when !Store.Testing:
+            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" or "extensions" or "extinstall" or "extconfirm" or "extpress" or "extpopup" or "extpanel" or "extremove" or "extenable" or "extpin" or "extsites" or "extreload" or "extupdate" or "notice" or "newwindow" or "closewindow" or "quit" or "addprofile" or "renameprofile" or "removeprofile" or "profiles" or "sync" or "importsources" or "import" or "agents" when !Store.Testing:
                 return BenchServer.Error($"{Text("do")} only works on a --test run");
+            // A window more, from this one (Ctrl+N), or this one closed; "window" in any request names the one to act in.
+            case "newwindow":
+                App.NewWindow(this);
+                return new JsonObject { ["window"] = App.Windows.Count - 1 };
+            case "closewindow":
+                Close();
+                return new JsonObject { ["windows"] = App.Windows.Count };
+            // Profiles: one made (and a window of it), renamed, removed; the list with each one's windows.
+            case "addprofile":
+                if (Text("name") is not { } named || MakeProfile(named) is not { } profileWindow) return BenchServer.Error("addprofile needs a name");
+                return new JsonObject { ["profile"] = SwiftJson.Uuid(profileWindow.Profile), ["window"] = App.Windows.IndexOf(profileWindow) };
+            case "renameprofile":
+                return Text("profile") is { } renaming && SwiftJson.Uuid(renaming) is { } rid && App.Shared.Profiles.Rename(rid, Text("name") ?? "") ? Profiles() : BenchServer.Error("no such profile, or no name");
+            case "removeprofile":
+                if (Text("profile") is not { } unwanted || SwiftJson.Uuid(unwanted) is not { } gone) return BenchServer.Error("removeprofile needs a profile");
+                DeleteProfile(gone);
+                return Profiles();
+            case "profiles":
+                return Profiles();
+            // Sync: on with a folder ("folder"), off ("off"), a pass now ("now"); its state either way.
+            case "sync":
+                if (Text("folder") is { } syncFolder) App.Syncing.TurnOn(syncFolder);
+                if (Flag("off")) App.Syncing.TurnOff();
+                var pass = Flag("now") ? await App.Syncing.Now() : null;
+                var sync = App.Shared.Sync;
+                return new JsonObject { ["on"] = sync.On, ["folder"] = sync.Folder, ["device"] = sync.Device, ["problem"] = pass?.Problem ?? sync.Problem, ["ran"] = pass?.Ran, ["changed"] = pass?.Changed, ["peers"] = new JsonArray(sync.Peers.Select(p => (JsonNode)JsonValue.Create(p.Name)!).ToArray()) };
+            // Import: what each browser in the test world's Import folder holds, and bringing some of it in, as the
+            // sheet's "Bring them in" does ("what": bookmarks, history, passwords, tabs, sidebar, extensions).
+            case "importsources":
+                return new JsonObject { ["sources"] = new JsonArray(ImportSource.Installed().Select(s => { var p = s.Preview(); return (JsonNode)new JsonObject { ["name"] = s.Name, ["profiles"] = new JsonArray(s.Profiles.Select(x => (JsonNode)JsonValue.Create(x.Name)!).ToArray()), ["bookmarks"] = p.Bookmarks, ["places"] = p.Places, ["passwords"] = p.Passwords, ["appBound"] = p.AppBound, ["tabs"] = p.Session.Tabs, ["extensions"] = p.Extensions.Count, ["sidebar"] = s.SidebarCounts() is { } c ? c.Spaces : null }; }).ToArray()) };
+            case "import":
+                if (ImportSource.Installed().FirstOrDefault(s => s.Name == Text("source")) is not { } importing) return BenchServer.Error("no such browser");
+                var bring = (request["what"] as JsonArray ?? []).Select(n => Enum.TryParse<Bringing>(n?.GetValue<string>(), ignoreCase: true, out var b) ? b : Bringing.None).Aggregate(Bringing.None, (all, b) => all | b);
+                var heard = await BringIn(importing, Text("profile"), bring);
+                Notice(heard);
+                return new JsonObject { ["said"] = heard, ["accounts"] = _vault.All().Count };
+            case "csv":
+                if (!Store.Testing || Text("file") is not { } csvFile) return BenchServer.Error("csv needs a file, on a --test run");
+                return new JsonObject { ["said"] = TakePasswordFile(csvFile), ["accounts"] = _vault.All().Count };
+            // Coding agents: the server's state, its question answered as a click would ("answer": allow or deny,
+            // "tabs", "always"), Stop pressed, or a program remembered as if it had passed its signature check.
+            case "agents":
+                if (Text("answer") is { } said) { if (_agentAsked is null) return BenchServer.Error("nothing is being asked"); _agentBoxes?.Tabs.SetValue(CheckBox.IsCheckedProperty, Flag("tabs")); _agentBoxes?.Always.SetValue(CheckBox.IsCheckedProperty, Flag("always")); AnswerAgent(said == "allow"); }
+                if (Flag("stop")) App.Agents?.Stop();
+                var state = App.Agents?.State ?? new JsonObject { ["running"] = false };
+                state["asking"] = _agentAsked is not null;
+                state["line"] = _agentLine.Visibility == Visibility.Visible ? _agentSaid.Text : null;
+                state["agentTabs"] = _browser.Tabs.Count(t => t.Agent);
+                return state;
+            case "quit":
+                DispatcherQueue.TryEnqueue(App.Quit);
+                return new JsonObject { ["ok"] = true };
             case "press":
                 if (Text("keys") is not { } combo) return BenchServer.Error("press needs keys, e.g. ctrl+t");
                 var before = Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot));
@@ -243,7 +284,7 @@ public sealed partial class MainWindow
     }
 
     /// By any prefix of its id, as the bench names tabs. Outside a test run only the bench's own.
-    private Tab? Find(string id) => (_peek is { } peek && peek.ShortId.StartsWith(id, StringComparison.OrdinalIgnoreCase) && Store.Testing ? peek : null) ?? _browser.Tabs.FirstOrDefault(t => (t.Bench || Store.Testing) && t.Id.ToString("N").StartsWith(id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
+    private Tab? Find(string id) => (_peek is { } peek && peek.ShortId.StartsWith(id, StringComparison.OrdinalIgnoreCase) && Store.Testing ? peek : null) ?? _browser.Tabs.FirstOrDefault(t => !t.Agent && (t.Bench || Store.Testing) && t.Id.ToString("N").StartsWith(id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
 
     private JsonObject Describe(Tab tab) => new()
     {
@@ -286,7 +327,7 @@ public sealed partial class MainWindow
         ["find"] = FindBar.Visibility == Visibility.Visible,
         ["findText"] = FindText.Text,
         ["findCount"] = FindCount.Text,
-        ["focused"] = Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot)),
+        ["focused"] = Root.XamlRoot is { } root ? Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root)) : null,
         ["findRaw"] = _finding is { } f ? new JsonArray(f.Find.MatchCount, f.Find.ActiveMatchIndex) : null,
         ["fullScreen"] = _fullScreen,
         ["panel"] = _panel.ToString().ToLowerInvariant(),
@@ -308,7 +349,20 @@ public sealed partial class MainWindow
         ["store"] = _browser.Store,
         ["panes"] = new JsonArray(_pages.Panes.Select(p => (JsonNode)new JsonObject { ["id"] = p.Tab.ShortId, ["x"] = p.Rect.X, ["y"] = p.Rect.Y, ["w"] = p.Rect.Width, ["h"] = p.Rect.Height }).ToArray()),
         ["tabs"] = _browser.Ordinary.Count(),
-        ["windows"] = new JsonArray(new JsonObject { ["kind"] = "browser", ["title"] = Title, ["visible"] = AppWindow.IsVisible, ["frame"] = new JsonArray(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height) })
+        ["window"] = App.Windows.IndexOf(this),
+        ["owner"] = _owner,
+        ["profile"] = App.Shared.Profiles.Get(Profile).Name,
+        ["windowTitle"] = Title,
+        ["windows"] = new JsonArray(App.Windows.Select(w => (JsonNode)new JsonObject { ["kind"] = "browser", ["title"] = w.Title, ["visible"] = w.AppWindow.IsVisible, ["front"] = w == App.Acting, ["space"] = w.CurrentSpace.Name, ["tabs"] = w._browser.Ordinary.Count(), ["frame"] = new JsonArray(w.AppWindow.Position.X, w.AppWindow.Position.Y, w.AppWindow.Size.Width, w.AppWindow.Size.Height) }).ToArray())
+    };
+
+    private static JsonObject Profiles() => new()
+    {
+        ["profiles"] = new JsonArray(App.Shared.Profiles.List.Select(p => (JsonNode)new JsonObject
+        {
+            ["id"] = SwiftJson.Uuid(p.Id), ["name"] = p.Name, ["windows"] = new JsonArray(App.Windows.Select((w, i) => (w, i)).Where(x => x.w.Profile == p.Id).Select(x => (JsonNode)JsonValue.Create(x.i)).ToArray()),
+            ["spaces"] = new JsonArray(App.Shared.Spaces.Of(p.Id).Select(s => (JsonNode)JsonValue.Create(s.Name)!).ToArray())
+        }).ToArray())
     };
 
     private JsonObject PopupState() => new()

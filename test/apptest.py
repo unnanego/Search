@@ -100,7 +100,10 @@ class App:
 
     def quit(self):
         if not self.process or self.process.poll() is not None: return
-        if h := self.window(): user32.PostMessageW(h, 0x0010, 0, 0)  # WM_CLOSE
+        # Exit, as Ctrl+Shift+Q quits: every window kept. A build without the verb is closed by its window instead.
+        try: ask({"do": "quit"}, self.world)
+        except Exception:
+            if h := self.window(): user32.PostMessageW(h, 0x0010, 0, 0)  # WM_CLOSE
         try: self.process.wait(15)
         except subprocess.TimeoutExpired: self.process.kill()
 

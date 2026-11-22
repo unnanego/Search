@@ -22,7 +22,7 @@ public sealed partial class MainWindow
     {
         PanelSearch.TextChanged += (_, _) => FillPanel();
         PanelRows.ItemClick += (_, e) => { if (e.ClickedItem is PanelRow row) TakePanelRow(row); };
-        _history.Changed += () => DispatcherQueue.TryEnqueue(() => { if (_panel == PanelKind.History) FillPanel(); });
+        Hook<Action>(h => _history.Changed += h, h => _history.Changed -= h, () => DispatcherQueue.TryEnqueue(() => { if (_panel == PanelKind.History) FillPanel(); }));
         _pages.DownloadStarted += (_, operation) =>
         {
             var fetch = new Fetch(operation);

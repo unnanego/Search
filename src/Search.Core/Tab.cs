@@ -16,6 +16,9 @@ public sealed class Tab : Observable
     public Guid Id { get; } = Guid.NewGuid();
     /// Opened by a script through the bench: never selected for you, never in the session or the history.
     public bool Bench { get; init; }
+    /// A bench tab a coding agent opened, or one its pages opened (AgentServer): it stays on the web, downloads nothing,
+    /// is asked for nothing, and none of its keys reach the window.
+    public bool Agent { get; init; }
     /// Its own cookie jar, and nothing left behind when it closes.
     public bool Private { get; init; }
     /// A peek at a link (Peek.swift): a page over the page, not in the row until it's kept.

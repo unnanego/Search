@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Search.Core;
+using Search.Engine;
 
 namespace Search.App;
 
@@ -31,6 +32,9 @@ public sealed partial class MainWindow
         import.Click += (_, _) => _ = ImportBookmarks();
         var export = new Button { Content = "Export bookmarks…" };
         export.Click += (_, _) => _ = ExportBookmarks();
+        var bringIn = new Button { Content = "Bring in from another browser…" };
+        bringIn.Click += (_, _) => { _settings?.Hide(); _ = OpenImport(); };
+        bookmarks.Children.Add(bringIn);
         bookmarks.Children.Add(import);
         bookmarks.Children.Add(export);
         var spaces = new ToggleSwitch { Header = "Spaces", IsOn = _spaces.UsesSpaces };
@@ -56,13 +60,16 @@ public sealed partial class MainWindow
         var bench = new ToggleSwitch { Header = "Let a script drive Search", IsOn = _prefs.Bench };
         var benchNote = new TextBlock { Text = $@"A script run as you on this PC can open tabs of its own and read them, through the pipe \\.\pipe\{Search.Bench.BenchServer.PipeFor(Store.Folder)}.", TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
         bench.Toggled += (_, _) => _prefs.Bench = bench.IsOn;
+        var agents = new ToggleSwitch { Header = "Let coding agents use Search", IsOn = _prefs.Agents };
+        var agentsNote = new TextBlock { Text = $@"Claude Code, Codex and others, through search-mcp, after you allow each one here. They work in tabs of their own and never see passwords, private tabs or your other windows. Pipe: \\.\pipe\{AgentServer.PipeFor(Store.Folder)}.", TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
+        agents.Toggled += (_, _) => _prefs.Agents = agents.IsOn;
         _settings = new ContentDialog
         {
             XamlRoot = Root.XamlRoot,
             Title = "Settings",
             CloseButtonText = "Done",
             RequestedTheme = Root.ActualTheme,
-            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, spaces, routes, sleep, closing, shield, paused, styles, bookmarks, passwords, extensions, little, browser, updates, bench, benchNote } } }
+            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, spaces, routes, ProfileSettings(), SyncSettings(), sleep, closing, shield, paused, styles, bookmarks, passwords, extensions, little, browser, updates, bench, benchNote, agents, agentsNote } } }
         };
         try { await _settings.ShowAsync(); }
         finally { _prefs.CustomEngine = custom.Text.Trim(); _settings = null; }

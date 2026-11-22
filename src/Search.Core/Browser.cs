@@ -38,9 +38,10 @@ public sealed class Browser : Observable
         }
     }
 
-    public Tab Open(Uri? url, bool select = true, Tab? after = null, bool bench = false, bool @private = false)
+    public Tab Open(Uri? url, bool select = true, Tab? after = null, bool bench = false, bool @private = false, bool agent = false)
     {
-        var tab = new Tab { Bench = bench, Private = @private, Store = bench || @private ? null : Store };
+        bench |= agent;
+        var tab = new Tab { Bench = bench, Agent = agent, Private = @private, Store = bench || @private ? null : Store };
         if (url is not null) tab.Url = url;
         // Bench tabs go at the very end; a tab opened from another goes beside it; anything else ends the ordinary row.
         var at = bench ? Tabs.Count : after is not null && Tabs.IndexOf(after) is var i and >= 0 ? i + 1 : Ordinary.Count();

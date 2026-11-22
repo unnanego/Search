@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,15 +19,18 @@ public sealed partial class MainWindow
     /// What each space left on screen: its tabs, the one in front and its splits, kept alive while another is shown.
     private readonly Dictionary<Guid, (List<Tab> Tabs, Tab? Selected, List<SplitPages> Splits, List<TabGroup> Groups)> _aside = new();
 
-    private void StartSpaces()
+    private void StartSpaces(WindowRecord? record, MainWindow? from)
     {
-        _spaces = new Spaces(settings: App.Notes);
-        _routes = new SpaceRoutes(_spaces);
-        // The space the window was last on, as the Mac picks it at launch; with spaces off, the home space.
-        _space = _spaces.Start().Space;
+        _spaces = App.Shared.Spaces;
+        _routes = App.Shared.Routes;
+        // The space the window was last on, as the Mac picks it at launch; with spaces off, the home space. A new
+        // window opens in the space of the window it came from.
+        _space = from is not null && _spaces.Find(from._space) is not null ? from._space
+            : record is not null || Profile == _spaces.Start().Profile ? _spaces.Start(record?.Space).Space
+            : _spaces.UsesSpaces ? _spaces.LastSpace(Profile) : _spaces.Home(Profile);
         _spaces.Current = _space;
         _browser.Store = _spaces.StoreName(_space);
-        _spaces.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(DrawSpaces);
+        Hook<PropertyChangedEventHandler>(h => _spaces.PropertyChanged += h, h => _spaces.PropertyChanged -= h, (_, _) => DispatcherQueue.TryEnqueue(DrawSpaces));
         DrawSpaces();
     }
 
@@ -37,6 +41,17 @@ public sealed partial class MainWindow
     {
         if (id == _space || _spaces.Find(id) is null || !_spaces.UsesSpaces) return;
         SaveSession(now: true);
+        // The row taken down and another put up: neither is a change to any space's pins.
+        _following = true;
+        try { Swap(id); } finally { _following = false; }
+        // Its pins as they are now: another window may have changed them while it was set aside.
+        FollowPins();
+        DrawSpaces();
+        SaveSession(now: true);
+    }
+
+    private void Swap(Guid id)
+    {
         ClosePeek();
         CloseFind();
         var row = _browser.Ordinary.ToList();
@@ -46,7 +61,7 @@ public sealed partial class MainWindow
         _browser.Selected = null;
         foreach (var tab in row) _browser.Tabs.Remove(tab);
         _space = id;
-        _spaces.Enter(id);
+        _spaces.Enter(id, primary: _owner);
         _browser.Store = _spaces.StoreName(id);
         if (_aside.Remove(id, out var back))
         {
@@ -57,9 +72,7 @@ public sealed partial class MainWindow
             _row.Sync();
             if (back.Selected is { } front && _browser.Tabs.Contains(front)) _browser.Selected = front; else if (_browser.Ordinary.FirstOrDefault() is { } first) _browser.Selected = first; else NewTab();
         }
-        else Restore(id);
-        DrawSpaces();
-        SaveSession(now: true);
+        else RestoreRow(id);
     }
 
     private void GoToSpaceNumber(int n)

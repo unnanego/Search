@@ -105,6 +105,8 @@ public sealed class History
     /// A write waiting out the pause.
     private bool _pausing;
     private bool _changed;
+    /// Its profile deleted: nothing is written any more.
+    private bool _retired;
     private Task<LoadedHistory>? _loading;
     private List<Action<History>> _duringLoad = [];
 
@@ -710,9 +712,17 @@ public sealed class History
 
     /// A cap, so the file can't grow without end. What goes is what has been visited least and longest ago. Memory
     /// also keeps its newest places through a session (see Prune), so the file cuts to the cap by score on its own.
+    /// Its profile deleted (Profiles.Delete): its file removed, and nothing written again.
+    public void Retire()
+    {
+        lock (_lock) _retired = true;
+        // Through the queue, so a write still on its way can't bring the file back after it.
+        Disk.Write(_file, () => { try { File.Delete(_file); } catch (IOException) { } catch (UnauthorizedAccessException) { } return null; });
+    }
+
     private void Write(bool now)
     {
-        if (_loading is not null || !_owed) return;
+        if (_retired || _loading is not null || !_owed) return;
         _owed = false;
         var date = DateTimeOffset.UtcNow;
         var snapshot = _visits.Values.ToArray();

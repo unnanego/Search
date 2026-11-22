@@ -9,7 +9,7 @@ namespace Search.App;
 // thirty days. What's playing, loading, on screen, pinned, named or in a group is left alone, as the rules say.
 public sealed partial class MainWindow
 {
-    private readonly Archive _archive = new();
+    private readonly Archive _archive;
     private DispatcherQueueTimer? _idle;
     private readonly DateTimeOffset _launched = DateTimeOffset.UtcNow;
 

@@ -303,13 +303,43 @@ public sealed class Spaces : Observable
         if (_current == id) Remember(Home(space.ProfileId), primary: true);
         Write(Of(space.ProfileId).Where(s => s.Id != id).ToList(), space.ProfileId);
         Session.Erase(id);
-        if (!owned) return true;
-        SetStrings(Settings, ErasingKey, Strings(Settings.TryGetValue(ErasingKey, out var text) ? text : null).Append(SwiftJson.Uuid(id)).Distinct().Order(StringComparer.Ordinal));
+        if (owned) EraseStore(id);
+        return true;
+    }
+
+    /// A profile deleted (Profiles.Delete): every space of it gone as Remove takes one, its home too, and the
+    /// profile's own store noted for erasing. Personal's never go. The spaces that went, for Pins to forget.
+    public IReadOnlyList<Space> RemoveProfile(Guid profile)
+    {
+        if (profile == PersonalProfile) return [];
+        var gone = _all.Where(s => s.ProfileId == profile).ToList();
+        if (gone.Any(s => s.Id == _current)) Current = Space.FirstId;
+        Write(_all.Where(s => s.ProfileId != profile).ToList());
+        foreach (var space in gone)
+        {
+            Session.Erase(space.Id);
+            if (space.SharesSignIns != true) EraseStore(space.Id);
+        }
+        NoteErasing(profile);
+        Settings.Remove(CurrentKey + "." + SwiftJson.Uuid(profile));
+        return gone;
+    }
+
+    /// A space's own store noted for erasing, and its own history removed.
+    private void EraseStore(Guid id)
+    {
+        NoteErasing(id);
         // Through the queue, so a write of its history still on its way can't bring the file back after it.
         var history = Store.File(SpaceHistoryFile(id));
         Disk.Write(history, () => { try { System.IO.File.Delete(history); } catch (IOException) { } catch (UnauthorizedAccessException) { } return null; });
-        return true;
     }
+
+    private void NoteErasing(Guid id) =>
+        SetStrings(Settings, ErasingKey, Strings(Settings.TryGetValue(ErasingKey, out var text) ? text : null).Append(SwiftJson.Uuid(id)).Distinct().Order(StringComparer.Ordinal));
+
+    /// The order is the one written from now on, wherever each profile's home is in it (Sync applies another
+    /// machine's order so).
+    internal void KeepOrder() => Flag(Settings, OrderKey, true);
 
     private bool Change(Guid id, Func<Space, Space> change)
     {

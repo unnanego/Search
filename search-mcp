@@ -26,6 +26,10 @@ events; typing is checked against the field; wait_for waits on a named
 condition; one controller at a time.
 
     search-mcp --world NAME    a test world's Search (SEARCH_PROBE=NAME)
+
+On Windows the same, over the named pipe Search listens on, "agent" under its
+folder's name ("Search", or "Search (NAME)" for a test world), for this user
+only: `claude mcp add search -- python <path to>/search-mcp`.
 """
 
 from __future__ import annotations
@@ -36,8 +40,10 @@ import signal
 import socket
 import stat
 import sys
+import time
 
 HOME = os.path.expanduser("~")
+WINDOWS = os.name == "nt"
 VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
 # How long a call waits for the person to answer the question in the window.
 ASKING = 120.0
@@ -51,14 +57,18 @@ def world_from_args():
 
 
 def folder(world):
+    # Windows: %LOCALAPPDATA%\Search, as Store.cs makes it.
+    root = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(HOME, "AppData", "Local"), "Search") if WINDOWS else None
     if not world:
-        return f"{HOME}/Library/Application Support/Search"
+        return root or f"{HOME}/Library/Application Support/Search"
     # As Store.world makes the name.
     world = "".join(c for c in str(world).lower() if c.isascii() and (c.isalnum() or c == "-"))
-    return f"{HOME}/Library/Application Support/Search ({'test' if world in ('', '1') else world})"
+    world = "test" if world in ("", "1") else world
+    return f"{root} ({world})" if root else f"{HOME}/Library/Application Support/Search ({world})"
 
 
 SOCKET = f"{folder(world_from_args())}/Agent/agent.sock"
+PIPE = "\\\\.\\pipe\\" + os.path.basename(folder(world_from_args())) + "\\agent"
 
 
 def yours(path):
@@ -76,6 +86,113 @@ def yours(path):
         and room.st_uid == os.getuid()
         and stat.S_IMODE(room.st_mode) & 0o077 == 0
     )
+
+
+class Pipe:
+    """Windows: Search's agent pipe, with the few socket calls used below. Its ACL
+    lets only this user connect; this checks that the end it reached is a
+    process of this user's too, or it could be some other program standing in
+    for Search under that name."""
+
+    def __init__(self, file):
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes as w
+
+        self.file, self.timeout, self.ctypes, self.w = file, None, ctypes, w
+        self.handle = w.HANDLE(msvcrt.get_osfhandle(file.fileno()))
+        self.k32 = k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.adv = adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32.PeekNamedPipe.argtypes = [w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.c_void_p, ctypes.POINTER(w.DWORD), ctypes.c_void_p]
+        k32.GetNamedPipeServerProcessId.argtypes = [w.HANDLE, ctypes.POINTER(w.ULONG)]
+        k32.OpenProcess.restype, k32.OpenProcess.argtypes = w.HANDLE, [w.DWORD, w.BOOL, w.DWORD]
+        k32.GetCurrentProcess.restype = w.HANDLE
+        k32.CloseHandle.argtypes = [w.HANDLE]
+        adv.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
+        adv.GetTokenInformation.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD)]
+        adv.GetLengthSid.restype, adv.GetLengthSid.argtypes = w.DWORD, [ctypes.c_void_p]
+
+    @classmethod
+    def open(cls, name):
+        for _ in range(50):
+            try:
+                file = open(name, "r+b", buffering=0)
+                break
+            except FileNotFoundError:
+                raise Refusal(
+                    "not_listening",
+                    "Search isn't open for coding agents",
+                    'Ask the person to turn on Settings › About › Developer › "Let coding agents use Search".',
+                ) from None
+            except OSError:
+                time.sleep(0.05)  # every instance busy for a moment
+        else:
+            raise Refusal("not_listening", "Search's pipe stayed busy", "Is Search running?")
+        pipe = cls(file)
+        if not pipe.yours():
+            pipe.close()
+            raise Refusal(
+                "not_search",
+                "The pipe isn't one Search made for this user",
+                "Don't use it. Turning the setting off and on again in Search makes it afresh.",
+            )
+        return pipe
+
+    def user(self, process):
+        c, w = self.ctypes, self.w
+        token, size = w.HANDLE(), w.DWORD()
+        if not self.adv.OpenProcessToken(process, 0x0008, c.byref(token)):  # TOKEN_QUERY
+            return None
+        try:
+            self.adv.GetTokenInformation(token, 1, None, 0, c.byref(size))  # TokenUser
+            buffer = c.create_string_buffer(size.value)
+            if not self.adv.GetTokenInformation(token, 1, buffer, size, c.byref(size)):
+                return None
+            sid = c.cast(buffer, c.POINTER(c.c_void_p))[0]
+            return c.string_at(sid, self.adv.GetLengthSid(sid))
+        finally:
+            self.k32.CloseHandle(token)
+
+    def yours(self):
+        pid = self.w.ULONG()
+        if not self.k32.GetNamedPipeServerProcessId(self.handle, self.ctypes.byref(pid)):
+            return False
+        process = self.k32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not process:
+            return False
+        try:
+            theirs = self.user(process)
+        finally:
+            self.k32.CloseHandle(process)
+        return theirs is not None and theirs == self.user(self.k32.GetCurrentProcess())
+
+    def settimeout(self, seconds):
+        self.timeout = seconds
+
+    def setblocking(self, blocking):
+        self.timeout = None if blocking else 0.0
+
+    def sendall(self, data):
+        view = memoryview(data)
+        while view:
+            view = view[self.file.write(view):]
+
+    def recv(self, size):
+        """What has come, without waiting past the timeout: a pipe has no
+        timeouts of its own, so it is looked at until something is there."""
+        until = None if self.timeout is None else time.monotonic() + self.timeout
+        while True:
+            have = self.w.DWORD()
+            if not self.k32.PeekNamedPipe(self.handle, None, 0, None, self.ctypes.byref(have), None):
+                return b""  # closed
+            if have.value:
+                return self.file.read(min(size, have.value))
+            if until is not None and time.monotonic() >= until:
+                raise BlockingIOError if self.timeout == 0 else socket.timeout
+            time.sleep(0.01)
+
+    def close(self):
+        self.file.close()
 
 
 class Refusal(Exception):
@@ -110,24 +227,7 @@ class Search:
         self.asking = None
 
     def connect(self):
-        if os.path.lexists(SOCKET) and not yours(SOCKET):
-            raise Refusal(
-                "not_search",
-                "The socket isn't one Search made for this user",
-                "Don't use it. Turning the setting off and on again in Search makes it afresh.",
-            )
-        if not os.path.exists(SOCKET):
-            raise Refusal(
-                "not_listening",
-                "Search isn't open for coding agents",
-                'Ask the person to turn on Settings › About › Developer › "Let coding agents use Search".',
-            )
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            s.connect(SOCKET)
-        except OSError:
-            s.close()
-            raise Refusal("not_listening", "Search isn't open for coding agents", "Is Search running?") from None
+        s = Pipe.open(PIPE) if WINDOWS else self.unix()
         # Search turns a connection away at once (another agent, or just
         # told no): read that before saying anything, or the hello would
         # meet a closed socket and the reason would be lost.
@@ -148,6 +248,27 @@ class Search:
                           error.get("hint", ""))
         self.sock, self.buffer = s, b""
         self.asking = self.send({"do": "hello", "client": self.client})
+
+    def unix(self):
+        if os.path.lexists(SOCKET) and not yours(SOCKET):
+            raise Refusal(
+                "not_search",
+                "The socket isn't one Search made for this user",
+                "Don't use it. Turning the setting off and on again in Search makes it afresh.",
+            )
+        if not os.path.exists(SOCKET):
+            raise Refusal(
+                "not_listening",
+                "Search isn't open for coding agents",
+                'Ask the person to turn on Settings › About › Developer › "Let coding agents use Search".',
+            )
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(SOCKET)
+        except OSError:
+            s.close()
+            raise Refusal("not_listening", "Search isn't open for coding agents", "Is Search running?") from None
+        return s
 
     def drop(self):
         if self.sock:
@@ -531,7 +652,12 @@ def main():
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGHUP, stop)
+    if hasattr(signal, "SIGHUP"):  # not on Windows
+        signal.signal(signal.SIGHUP, stop)
+    if WINDOWS:
+        # MCP speaks UTF-8, one message per line, whatever this console's code page.
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     try:
         serve()
     except KeyboardInterrupt:

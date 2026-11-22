@@ -97,6 +97,9 @@ public sealed class Pages
     public Task<System.Text.Json.Nodes.JsonNode?> Evaluate(Tab tab, string expression) =>
         _worlds.TryGetValue(tab, out var world) ? world.Evaluate(expression) : Task.FromResult<System.Text.Json.Nodes.JsonNode?>(null);
 
+    /// A tab's isolated world, and through it its CoreWebView2; null if it has no web view.
+    public World? WorldOf(Tab tab) => _worlds.GetValueOrDefault(tab);
+
     public Pages(Browser browser, Grid stage)
     {
         _browser = browser;
@@ -230,6 +233,8 @@ public sealed class Pages
         var world = await World.Open(core, _scripts.Prepend(KeyListener(tab.Peek ? Keys.Append("esc").ToList() : Keys)));
         world.Message += (kind, body) => OnMessage(tab, kind, body);
         _worlds[tab] = world;
+        // A coding agent's page never has a file chosen for it: the chooser is caught and never shown.
+        if (tab.Agent) { try { await core.CallDevToolsProtocolMethodAsync("Page.setInterceptFileChooserDialog", """{"enabled":true}"""); } catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { } }
         // The ad blocker before the first request, as the Mac holds the first loads until its list is ready.
         await Shield.Protect(core.Profile, _shieldOn, _shieldPaused);
         await YouTube(tab, core);
@@ -263,22 +268,25 @@ public sealed class Pages
 
     private void Wire(Tab tab, CoreWebView2 core)
     {
-        core.NavigationStarting += (_, _) => tab.Loading = true;
+        if (tab.Agent) Confine(core);
+        core.NavigationStarting += (_, e) => { if (!e.Cancel) tab.Loading = true; };
         core.SourceChanged += (_, _) => { if (Uri.TryCreate(core.Source, UriKind.Absolute, out var url) && url.AbsoluteUri != "about:blank") tab.Url = url; };
         core.DocumentTitleChanged += (_, _) => { tab.Title = core.DocumentTitle; TitleChanged?.Invoke(tab, core.DocumentTitle); };
         core.HistoryChanged += (_, _) => { tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward; };
         core.FaviconChanged += (_, _) => tab.Icon = string.IsNullOrEmpty(core.FaviconUri) ? null : core.FaviconUri;
         core.ContainsFullScreenElementChanged += (_, _) => FullScreen?.Invoke(tab, core.ContainsFullScreenElement);
         core.IsDocumentPlayingAudioChanged += (_, _) => tab.Audible = core.IsDocumentPlayingAudio;
-        core.DownloadStarting += (_, e) => { e.Handled = true; DownloadStarted?.Invoke(tab, e.DownloadOperation); };
+        core.DownloadStarting += (_, e) => { e.Handled = true; if (tab.Agent) e.Cancel = true; else DownloadStarted?.Invoke(tab, e.DownloadOperation); };
         core.PermissionRequested += (_, e) =>
         {
+            // A coding agent's tab never sees, hears, locates or notifies you, whatever a site was allowed before.
+            if (tab.Agent) { e.State = CoreWebView2PermissionState.Deny; e.Handled = true; return; }
             // Asked of WebView2's own question only when nobody in the window is listening.
             if (PermissionAsked is null) return;
             e.Handled = true;
             PermissionAsked(tab, e, e.GetDeferral());
         };
-        core.NotificationReceived += (_, e) => { e.Handled = true; Notified?.Invoke(tab, e.Notification); };
+        core.NotificationReceived += (_, e) => { e.Handled = true; if (!tab.Agent) Notified?.Invoke(tab, e.Notification); };
         core.NavigationCompleted += (_, e) =>
         {
             tab.Loading = false;
@@ -291,16 +299,30 @@ public sealed class Pages
         core.NewWindowRequested += (_, e) => Adopt(e, tab);
     }
 
+    /// A coding agent's tab stays on the web: none of Search's own pages, no file:// and no link handed to another app,
+    /// whoever asked (the agent, the page, or a link it clicked); no download, no sign-in box, no dialog over your page.
+    private static void Confine(CoreWebView2 core)
+    {
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
+        core.NavigationStarting += (_, e) => { if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var url) || !AgentRules.MayLoad(url)) e.Cancel = true; };
+        core.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
+        core.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
+    }
+
+    /// A page opened another tab: the new one, and the one it came from. A coding agent's tab's are its own too.
+    public event Action<Tab, Tab>? Opened;
+
     /// A new window a page or an extension asked for, as a tab of the row's beside the one it came from.
     private async void Adopt(CoreWebView2NewWindowRequestedEventArgs e, Tab? from)
     {
         var deferral = e.GetDeferral();
         try
         {
-            var opened = _browser.Open(null, select: from is not { Bench: true }, after: from ?? _browser.Selected, bench: from?.Bench ?? false, @private: from?.Private ?? false);
+            var opened = _browser.Open(null, select: from is not { Bench: true }, after: from ?? _browser.Selected, bench: from?.Bench ?? false, @private: from?.Private ?? false, agent: from?.Agent ?? false);
             var view = await Ensure(opened, navigate: false);
             e.NewWindow = view.CoreWebView2;
             e.Handled = true;
+            if (from is not null) Opened?.Invoke(opened, from);
             SurfaceOpened?.Invoke(opened);
         }
         catch (Exception x) { System.Diagnostics.Debug.WriteLine(x); }
@@ -377,6 +399,8 @@ public sealed class Pages
     {
         Heard[tab] = Heard.GetValueOrDefault(tab) + 1;
         if (kind != "key") { Message?.Invoke(tab, kind, body); return; }
+        // A coding agent's keys go to its page, never through the window: none of Search's shortcuts hears them.
+        if (tab.Agent) return;
         if (body.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && (Keys.Contains(name) || tab.Peek && name == "esc")) KeyPressed?.Invoke(tab, name);
     }
     private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) { tab.Loading = true; core.Navigate(url.AbsoluteUri); } }

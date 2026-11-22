@@ -25,6 +25,9 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Search.Engine.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Search.Core\Search.Core.csproj" />
   </ItemGroup>
 </Project>

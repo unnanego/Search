@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI.Xaml.Controls;
 using Search.Core;
 using Windows.Storage.Pickers;
@@ -8,9 +9,9 @@ namespace Search.App;
 // folders, the field offering them as you type, and the file every browser imports and exports.
 public sealed partial class MainWindow
 {
-    private readonly Bookmarks _bookmarks = new(settings: App.Notes);
+    private readonly Bookmarks _bookmarks;
 
-    private void WireBookmarks() => _bookmarks.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(() => { if (_panel == PanelKind.Bookmarks) FillPanel(); });
+    private void WireBookmarks() => Hook<PropertyChangedEventHandler>(h => _bookmarks.PropertyChanged += h, h => _bookmarks.PropertyChanged -= h, (_, _) => DispatcherQueue.TryEnqueue(() => { if (_panel == PanelKind.Bookmarks) FillPanel(); }));
 
     /// Ctrl+D: the page in front kept, or let go of if it already was.
     private void ToggleBookmark()

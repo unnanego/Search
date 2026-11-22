@@ -179,7 +179,14 @@ public sealed class Vault
     public (int Kept, int Skipped) Take(string csv)
     {
         var (rows, skipped) = Accounts.FromCsv(csv);
-        var kept = 0;
+        var (kept, already) = Take(rows);
+        return (kept, skipped + already);
+    }
+
+    /// Passwords read from another browser or its export (Import), put in here: how many were new, how many were here.
+    public (int Kept, int Skipped) Take(IEnumerable<Imported> rows)
+    {
+        int kept = 0, skipped = 0;
         foreach (var row in rows) { if (Save(row.Host, row.User, row.Password, clear: row.Clear)) kept++; else skipped++; }
         return (kept, skipped);
     }

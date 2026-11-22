@@ -13,7 +13,7 @@ namespace Search.App;
 // never see one except the moment it goes into the box you chose.
 public sealed partial class MainWindow
 {
-    private readonly Vault _vault = new();
+    private readonly Vault _vault = App.Shared.Vault;
     private Forms? _forms;
     private (Tab Tab, FieldInfo Field, string Host, bool Clear)? _field;
     private DateTime _loginsShown;

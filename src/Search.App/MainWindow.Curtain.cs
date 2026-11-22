@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Search.Core;
@@ -9,20 +10,20 @@ namespace Search.App;
 // (SiteStyles.swift), and reading mode (Reader.swift), in the window. The page side is Curtain.cs and Reader.cs.
 public sealed partial class MainWindow
 {
-    private readonly Hidden _hidden = new();
-    private readonly SiteStyles _styles = new();
-    private readonly Downloads _downloads = new();
+    private readonly Hidden _hidden = App.Shared.Hidden;
+    private readonly SiteStyles _styles = App.Shared.Styles;
+    private readonly Downloads _downloads = App.Shared.Downloads;
     private Tab? _picking;
 
     private void WireCurtain()
     {
         _styles.On = _prefs.SiteStyles;
-        _prefs.PropertyChanged += (_, e) =>
+        Hook<PropertyChangedEventHandler>(h => _prefs.PropertyChanged += h, h => _prefs.PropertyChanged -= h, (_, e) =>
         {
             if (e.PropertyName != nameof(Prefs.SiteStyles)) return;
             _styles.On = _prefs.SiteStyles;
             foreach (var host in _browser.Tabs.Where(t => t.Live).Select(t => Hidden.Host(t.Url)).OfType<string>().Distinct().ToList()) _ = RedressHost(host);
-        };
+        });
         _pages.AddScript(Curtain.DocumentStartScript);
         Curtain.Follow(_pages, _browser, (_, url) => Dress(url));
         _pages.Message += (tab, kind, body) => { if (Curtain.TryHear(kind, body, out var heard)) DispatcherQueue.TryEnqueue(() => OnCurtain(tab, heard)); };

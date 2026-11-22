@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,18 +19,27 @@ public sealed partial class MainWindow : Window
     private readonly Pages _pages;
     private bool _fullScreen;
 
-    public MainWindow(Prefs prefs, History history)
+    public MainWindow(Shared shared, WindowRecord? record = null, bool primary = false, MainWindow? from = null, Guid? profile = null)
     {
-        _prefs = prefs;
-        _history = history;
+        _prefs = shared.Prefs;
+        // A window belongs to one profile for its whole life (Profiles.swift): the one it was opened for, the one of
+        // the window it came from, or the one of the space it showed.
+        var spaces = shared.Spaces;
+        Profile = profile is { } p && shared.Profiles.Has(p) ? p : from?.Profile ?? spaces.ProfileOf(record?.Space ?? spaces.Start().Space);
+        _history = shared.HistoryOf(Profile);
+        _bookmarks = shared.BookmarksOf(Profile);
+        _archive = shared.ArchiveOf(Profile);
+        // The oldest window of its profile holds that profile's session files (WindowsFile.FileHolders).
+        _owner = primary || App.Windows.All(w => w.Profile != Profile);
+        _record = record;
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 900));
+        Place(record, from);
         _row = new RowMirror(_browser);
-        _pages = new Pages(_browser, Stage) { Theme = prefs.Theme };
-        _ = _pages.SetShield(prefs.Shield, prefs.ShieldPaused);
+        _pages = new Pages(_browser, Stage) { Theme = _prefs.Theme };
+        _ = _pages.SetShield(_prefs.Shield, _prefs.ShieldPaused);
         Row.ItemsSource = _row.Items;
         Strip.ItemsSource = _row.Flat;
         PinGrid.ItemsSource = _row.Pins;
@@ -41,9 +51,9 @@ public sealed partial class MainWindow : Window
         Strip.DragItemsCompleted += (_, e) => _row.Reordered(e.Items.ToList());
         _browser.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(Browser.Selected)) OnSelected(); };
         _pages.Visited += (_, url, title) => _history.Record(url, title);
-        _pages.TitleChanged += (tab, title) => { if (tab == _browser.Selected) Title = Shown(tab); if (!tab.Bench && !tab.Private && tab.Url is { } url) _history.Retitle(url, title); };
+        _pages.TitleChanged += (tab, title) => { if (tab == _browser.Selected) Title = Titled(tab); if (!tab.Bench && !tab.Private && tab.Url is { } url) _history.Retitle(url, title); };
         _pages.FullScreen += (tab, on) => { if (tab == _browser.Selected) SetFullScreen(on); };
-        _prefs.PropertyChanged += (_, e) => { if (e.PropertyName is nameof(Prefs.TabsOnSide) or nameof(Prefs.Folded) or nameof(Prefs.ColumnWidth)) Lay(); if (e.PropertyName == nameof(Prefs.Theme)) Paint(); if (e.PropertyName == nameof(Prefs.Bench)) Bench(); if (e.PropertyName is nameof(Prefs.Shield) or nameof(Prefs.ShieldPaused)) _ = _pages.SetShield(_prefs.Shield, _prefs.ShieldPaused); };
+        Hook<PropertyChangedEventHandler>(h => _prefs.PropertyChanged += h, h => _prefs.PropertyChanged -= h, (_, e) => { if (e.PropertyName is nameof(Prefs.TabsOnSide) or nameof(Prefs.Folded) or nameof(Prefs.ColumnWidth)) Lay(); if (e.PropertyName == nameof(Prefs.Theme)) Paint(); if (e.PropertyName is nameof(Prefs.Shield) or nameof(Prefs.ShieldPaused)) _ = _pages.SetShield(_prefs.Shield, _prefs.ShieldPaused); });
         WireField();
         WireKeys();
         _pages.Keys = PageKeys();
@@ -60,15 +70,16 @@ public sealed partial class MainWindow : Window
         WireFold();
         WireIdle();
         WireRow();
+        WireAgent();
         WireExtensions();
         Lay();
         Paint();
-        StartSpaces();
+        StartSpaces(record, from);
+        WirePins();
         Restore();
-        _browser.SessionChanged += () => SaveSession(now: false);
-        Bench();
-        // On the way out, whatever is still on its way to the disk (notes, bookmarks, the vault) gets there first.
-        Closed += (_, _) => { SaveSession(now: true); _history.Flush(); _bench?.Dispose(); Disk.Flush().Wait(TimeSpan.FromSeconds(3)); };
+        // Pins are told to the other windows at once; the row is written a moment later.
+        _browser.SessionChanged += () => { TellPins(); SaveSession(now: false); };
+        AppWindow.Changed += (_, e) => { if (e.DidPositionChange || e.DidSizeChange) App.SaveWindows(); };
         if (Store.Testing && Environment.GetEnvironmentVariable("SEARCH_FOCUS_LOG") == "1")
         {
             Microsoft.UI.Xaml.Input.FocusManager.GotFocus += (_, e) => File.AppendAllText(Store.File("focus.log"), $"{DateTime.Now:HH:mm:ss.fff} got {Describe(e.NewFocusedElement)}\n");
@@ -78,6 +89,20 @@ public sealed partial class MainWindow : Window
             Root.AddHandler(UIElement.PreviewKeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, e) => File.AppendAllText(Store.File("focus.log"), $"{DateTime.Now:HH:mm:ss.fff} previewkeydown {e.Key} from {Describe(e.OriginalSource)}\n")), true);
         }
     }
+
+    /// The profile this window belongs to, for its whole life.
+    public Guid Profile { get; }
+    /// Whether it holds its profile's session files.
+    public bool Owner => _owner;
+
+    /// What this window was handed at launch (windows.json's line for it), until its rows are read.
+    private readonly WindowRecord? _record;
+    /// Whether this window holds the session files: the oldest window still open (Windows.swift's usesFiles).
+    private bool _owner;
+    /// Unhooking from what every window shares, when this one goes.
+    private readonly List<Action> _unhook = new();
+
+    private void Hook<T>(Action<T> on, Action<T> off, T handler) where T : Delegate { on(handler); _unhook.Add(() => off(handler)); }
 
     private static string Describe(object? element) => element switch { FrameworkElement { Name.Length: > 0 } f => $"{f.GetType().Name} {f.Name}", null => "null", _ => element.GetType().Name };
 
@@ -123,7 +148,7 @@ public sealed partial class MainWindow : Window
         Row.SelectedItem = tab is { Pinned: false } ? tab : null;
         PinGrid.SelectedItem = tab is { Pinned: true } ? tab : null;
         Strip.SelectedItem = tab;
-        Title = tab is null ? "Search" : Shown(tab);
+        Title = Titled(tab);
         ShowAddressNow();
         CloseFind();
         if (tab is null) { FocusField(); return; }
@@ -162,8 +187,18 @@ public sealed partial class MainWindow : Window
 
     private void NewTab(bool @private = false) { _browser.Open(null, @private: @private); FocusField(); }
 
+    /// Ctrl+Shift+T: the tab closed last, or the window, whichever went later.
+    private void Reopen()
+    {
+        if (App.LastClosedAt is { } window && (!_browser.CanReopen || window > _tabClosedAt) && App.ReopenWindow()) return;
+        _browser.Reopen();
+    }
+
+    private DateTimeOffset _tabClosedAt;
+
     private void Close(Tab tab)
     {
+        _tabClosedAt = DateTimeOffset.UtcNow;
         _browser.Close(tab);
         if (_browser.Ordinary.Any()) return;
         // The last tab closed leaves an empty one, ready for an address, rather than an empty window.

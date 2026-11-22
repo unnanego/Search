@@ -11,9 +11,9 @@
   const send = message => { try { globalThis.__searchSend(message); } catch (e) {} };
 
   // Fields that hold a secret: a password box from the moment it is focused or typed in, and every box Search fills
-  // with a password. Search's own readers of a page (an agent's reads, checks and pictures) keep their values back
-  // for good, even after a "show password" button turns one into a text box.
-  const secrets = new WeakSet();
+  // with a password. Search's own readers of a page (an agent's reads, checks and pictures, page-hands.js) keep their
+  // values back for good, even after a "show password" button turns one into a text box: the set is theirs too.
+  const secrets = globalThis.__searchSecrets || (globalThis.__searchSecrets = new WeakSet());
   const keepSecret = box => { try { if (box) secrets.add(box); } catch (e) {} };
   const passwordBox = el => !!el && el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'password';
   // The box itself, inside an open shadow root too: the event's target is only its host from out here.
