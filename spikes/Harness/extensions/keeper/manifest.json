@@ -1,0 +1,1 @@
+{ "manifest_version": 3, "name": "Spike Keeper", "version": "1", "background": { "service_worker": "worker.js" }, "permissions": ["storage"] }

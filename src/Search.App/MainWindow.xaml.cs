@@ -60,6 +60,7 @@ public sealed partial class MainWindow : Window
         WireFold();
         WireIdle();
         WireRow();
+        WireExtensions();
         Lay();
         Paint();
         StartSpaces();
@@ -189,6 +190,7 @@ public sealed partial class MainWindow : Window
         if (column) ColumnFieldSlot.Child = Field; else FieldHost.Children.Add(Field);
         FieldHost.Visibility = Visibility.Collapsed;
         SetTitleBar(side ? TopBar : DragSpace);
+        LayExtensions();
         LayFold();
     }
 

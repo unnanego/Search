@@ -199,6 +199,50 @@ Not done:
 
 **Phase 4 — Extensions (smaller after spike 1).** Web Store install with CRX3 verification, the puzzle menu and pinning, popups, site access, unpacked + reload, native messaging.
 
+*Phase 4 status (2026-11-21): built.* `python test/phase4.py` runs 48 checks in its own test world, with extensions written by the test and a Chrome Web Store played by its own server (`test/makecrx.cs` signs the packages), and they pass. Phases 1–3 still pass; Core and Engine have 747 unit tests. Built:
+- **Installing:**
+  - from the Chrome Web Store, by its page's own button or "Add to Search", or a link or id pasted into the Extensions panel;
+  - the package's signature checked against its id (CRX3, RSA or ECDSA), then unpacked;
+  - from a folder, copied in, with Reload bringing in its later edits.
+  - Every install asks first, saying what the extension will be able to do. An update that wants more asks again; store extensions are checked once a day.
+- **The copy Search loads:** `installed.json` in the Mac's shape, and each extension in `Extensions\<id>`. Its manifest is rewritten from the original:
+  - a store copy keeps the store's key, so its id is the store's;
+  - a folder copy gets a key of Search's own, so its id is stable and known before it loads;
+  - its worker is wrapped so Search's shim runs first;
+  - its sites are narrowed as you chose.
+- **Every profile in step:** a space with sign-ins of its own is a profile of its own, and each profile is given each extension once per launch. Removed ones are taken out of profiles that weren't open at the time. Private tabs have none.
+- **The buttons:**
+  - the pinned extensions and the puzzle, at the foot of the column, or beside the tabs when they run across the top;
+  - a right-click for pin, side panel, options, "Runs on", reload, turn off and remove;
+  - the Extensions panel, which Settings also opens.
+- **Popups:** a web view of Search's own over the window, hanging from the button and sized to its page (25–800 × 25–600). A click elsewhere, Esc, `window.close()` or another press of the button puts it away.
+  - A press is worked out by the extension itself, in a page of its own that Search loads first (the bridge): its popup for this tab, its side panel if it opens on a press, or its `action.onClicked`. WebView2 can't fire onClicked, so Search fires it through the worker shim.
+- **The side panel:** an extension's panel beside the page, resizable, its width kept. It follows you from tab to tab.
+- **The window model, shimmed:**
+  - in Search's popups and panels, "the current window" is the tab in front's, and `tabs.getCurrent()` is nothing, as in Chrome;
+  - in the worker, while one of Search's surfaces has the keyboard, the tab in front's window answers instead;
+  - Search's surfaces are left out of `windows.getAll` and `tabs.query`;
+  - Search's own messages never reach an extension's listeners.
+- **Where an extension runs:** every site it asked for, or only the sites you name, each with its subdomains. Its copy's host permissions and content-script matches are narrowed and it's loaded again, so elsewhere its scripts aren't put in the page at all.
+- **Native messaging:** WebView2 already reads the hosts registered for Chrome, Edge and Chromium (spike 6). There was nothing to build.
+- **The Chrome Web Store in WebView2:** WebView2 says it's Chrome 157 and gives the store its private install API. So the store's own button is live, and would install straight into WebView2, past everything above.
+  - In the store's own world, Search replaces that API before the store's scripts run: a real press asks Search instead, and so does the store's "Remove".
+  - For a store page that sees another browser, the Mac's relay ("Add to Search" in place of a grey button) is kept.
+
+What Phase 4 taught us (spikes/VERDICTS.md, spikes 6 and 7):
+- **Never remove an extension to update it**; add it again. Removing erases what it saved.
+- **No file or folder in an extension may start with `_`**; WebView2 says only "access denied".
+- **An extension turned off has to be turned on as the profile lists it.**
+- **A tab's page is built a moment after its address is set**, now that it waits for its profile's extensions. A press in that moment waits for it.
+
+Not done:
+- **activeTab and "On click":** Chrome lends an extension the page in front when you press its button. WebView2 has no way to, so an extension without host permissions can't read the address of the tab it's given. For the same reason "Runs on › On click" isn't offered (the model has it).
+- **Badges, and changes the extension makes to its button:** `action.setBadgeText`, `setIcon`, `setTitle` and a per-tab `setPopup` aren't seen. The button shows the manifest's icon, and a press asks the extension for its current popup.
+- **More of the extension API surface:** `sidePanel.open()` from the extension, `commands` (an extension's keyboard shortcuts), `tabs.captureVisibleTab`, and `contextMenus` items in Search's own menus.
+- **Tab managers still see one window per tab.** Only "the current window" is shimmed; the row's order and groups aren't.
+- **Extensions in private tabs**, which Chrome allows per extension.
+- **Real third-party extensions are untested** (uBlock Origin Lite, Bitwarden, 1Password, Dark Reader), since that means downloading them, which needs a go-ahead. Nothing was installed from the real store; on its page, the install and remove APIs were only checked to be Search's.
+
 **Phase 5 — Ecosystem.** Import from Chrome, Edge, Brave, Arc, Firefox, and Zen (tabs, bookmarks, history; passwords via CSV); profiles; multiple windows; folder Sync compatible with the Mac; `search-mcp` agent control with its trust prompts.
 
 **Phase 6 — Later.** Local AI engine, translation, live folders, capture, launcher over any app, and whatever upstream adds meanwhile (triaged from `CHANGELOG.md` each phase).

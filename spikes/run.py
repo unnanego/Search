@@ -34,6 +34,8 @@ PLAN = {
     "extensions": lambda: [run("extensions", "extensions"), run("extensions-handled", "extensions", "--mode", "handled")],
     "pip": lambda: [run("pip", "pip")],
     "overlay": lambda: [run("overlay", "overlay")],
+    "windows": lambda: [run("windows", "windows")],
+    "keeper": lambda: [run("keeper", "keeper")],
 }
 
 if __name__ == "__main__":

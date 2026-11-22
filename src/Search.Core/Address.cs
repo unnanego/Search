@@ -16,7 +16,8 @@ public static class Address
 
     /// Schemes the window can show itself. Anything else typed with a scheme (mailto:, a custom app link) is
     /// somebody else's job and gets refused here rather than opening a blank tab.
-    private static readonly HashSet<string> Ours = ["http", "https", "file", "about", "data", InternalScheme];
+    /// An extension's own pages are places too (its options, a page it opens), as in Chrome.
+    private static readonly HashSet<string> Ours = ["http", "https", "file", "about", "data", "chrome-extension", InternalScheme];
 
     /// A file on this PC, typed as C:\…, C:/… or ~\…. Only committed navigation checks the disk; suggestions and
     /// dropped text never do.

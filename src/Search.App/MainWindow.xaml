@@ -15,12 +15,14 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ColumnDef" Width="240" />
             <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="SideDef" Width="0" />
         </Grid.ColumnDefinitions>
 
         <!-- The title bar: empty, draggable. In strip mode the tabs sit in it, left of the drag space. -->
-        <Grid x:Name="TopBar" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2">
+        <Grid x:Name="TopBar" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="StripDef" Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="140" />
             </Grid.ColumnDefinitions>
@@ -41,7 +43,9 @@
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
-            <Border x:Name="DragSpace" Grid.Column="1" Background="Transparent" />
+            <!-- With the tabs across the top, the extensions' buttons sit here, beside them. -->
+            <Border x:Name="TopExtensionsSlot" Grid.Column="1" VerticalAlignment="Center" Margin="6,0" />
+            <Border x:Name="DragSpace" Grid.Column="2" Background="Transparent" />
         </Grid>
 
         <!-- The column: the field, then the tabs. -->
@@ -119,11 +123,15 @@
                 </Button>
                 <!-- The spaces: one button each, the one on screen outlined; right-click for its menu. -->
                 <StackPanel x:Name="SpacesBar" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" Visibility="Collapsed" />
+                <!-- The extensions: the pinned ones' buttons, then the puzzle that lists them all. Nothing with none installed. -->
+                <Border x:Name="ColumnExtensionsSlot">
+                    <StackPanel x:Name="ExtensionsBar" Orientation="Horizontal" Spacing="2" HorizontalAlignment="Left" Visibility="Collapsed" />
+                </Border>
             </StackPanel>
         </Grid>
 
         <!-- Folded away (Ctrl+S): a push against the window's left edge slides the column out over the page. -->
-        <Border x:Name="Edge" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2" Width="6" HorizontalAlignment="Left" Background="Transparent" Visibility="Collapsed" Canvas.ZIndex="5" />
+        <Border x:Name="Edge" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="3" Width="6" HorizontalAlignment="Left" Background="Transparent" Visibility="Collapsed" Canvas.ZIndex="5" />
 
         <!-- The page, as a card. -->
         <Border x:Name="Card" Grid.Row="1" Grid.Column="1" Margin="4,0,8,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
@@ -131,6 +139,23 @@
                 <Grid x:Name="Stage" />
                 <!-- Split View's dividers and the outline of the page with the keys, over the pages. -->
                 <Canvas x:Name="SplitMarks" />
+            </Grid>
+        </Border>
+
+        <!-- The side panel (SidePanel.swift): an extension's panel, beside the page on the side away from the column, as
+             wide as you last left it. Its left edge resizes it. -->
+        <Border x:Name="SidePanel" Grid.Row="1" Grid.Column="2" Margin="0,0,8,8" CornerRadius="8" Visibility="Collapsed"
+                Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid Padding="10,0,4,0" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Image x:Name="SideIcon" Width="16" Height="16" />
+                    <TextBlock x:Name="SideTitle" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.8" />
+                    <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12" Background="Transparent" BorderThickness="0" Click="OnSideClose" ToolTipService.ToolTip="Close the side panel" />
+                </Grid>
+                <Grid x:Name="SideStage" Grid.Row="1" />
+                <Border x:Name="SideHandle" Grid.RowSpan="2" Width="6" HorizontalAlignment="Left" Background="Transparent" Margin="-6,0,0,0" />
             </Grid>
         </Border>
 
@@ -185,7 +210,7 @@
         </Border>
 
         <!-- Your accounts for the sign-in box the caret is in, under that box. Placed by MainWindow.Passwords. -->
-        <Canvas x:Name="Overlay" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2">
+        <Canvas x:Name="Overlay" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="3">
             <Border x:Name="Logins" Width="300" Padding="4" CornerRadius="8" Visibility="Collapsed"
                     Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <ListView x:Name="LoginRows" SelectionMode="None" IsItemClickEnabled="True" MaxHeight="260">
@@ -253,6 +278,15 @@
                 </ListView>
             </StackPanel>
         </Border>
+
+        <!-- An extension's popup (ExtensionPopup.swift), hanging from its button, sized to its page. A click anywhere
+             else puts it away. -->
+        <Grid x:Name="PopupLayer" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="3" Background="Transparent" Visibility="Collapsed" Canvas.ZIndex="10">
+            <Border x:Name="PopupCard" HorizontalAlignment="Left" VerticalAlignment="Top" CornerRadius="8" BorderThickness="1" Width="25" Height="25"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+                <Grid x:Name="PopupStage" CornerRadius="8" />
+            </Border>
+        </Grid>
 
         <!-- Find on the page. -->
         <Border x:Name="FindBar" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,20,0" Padding="8,4"

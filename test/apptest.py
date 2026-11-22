@@ -39,13 +39,15 @@ VK = {"ctrl": 0x11, "shift": 0x10, "alt": 0x12, "enter": 0x0D, "tab": 0x09, "esc
 
 
 class App:
-    def __init__(self, world, pages=None, settings=None, hosts=None, files=None):
+    def __init__(self, world, pages=None, settings=None, hosts=None, files=None, env=None):
         self.world, self.pages, self.settings, self.process = world, pages or {}, settings, None
         # Files to put in the world's folder before the first launch (name → text, or a function of the app).
         self.files = files or {}
         self.hits = {}
         # Real hostnames the test wants served by its own server (e.g. an ad network, to see it blocked).
         self.hosts = hosts or []
+        # More of the app's environment for this test (a function of the app, or a dict).
+        self.env = env or {}
         app = self
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -54,8 +56,12 @@ class App:
                 if self.path.startswith("/img"):
                     gif = bytes.fromhex("47494638396101000100800000ffffff00000021f90401000000002c00000000010001000002024401003b")
                     self.send_response(200); self.send_header("Content-Type", "image/gif"); self.send_header("Content-Length", str(len(gif))); self.end_headers(); self.wfile.write(gif); return
-                body = app.pages.get(self.path.split("?")[0], "<title>404</title>not found").encode()
-                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                # A page is its HTML, or (type, bytes) for anything else, or a function of the query that returns one.
+                path, _, query = self.path.partition("?")
+                page = app.pages.get(path, "<title>404</title>not found")
+                if callable(page): page = page(query)
+                kind, body = page if isinstance(page, tuple) else ("text/html; charset=utf-8", page.encode())
+                self.send_response(200); self.send_header("Content-Type", kind); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             def log_message(self, *a): pass
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -81,7 +87,7 @@ class App:
         shutil.rmtree(folder(self.world), ignore_errors=True)
 
     def launch(self):
-        env = dict(os.environ, SEARCH_PROBE=self.world, SEARCH_BENCH="1")
+        env = dict(os.environ, SEARCH_PROBE=self.world, SEARCH_BENCH="1", **(self.env(self) if callable(self.env) else self.env))
         if self.hosts: env["SEARCH_WEBVIEW_ARGS"] = "--host-resolver-rules=\"" + ", ".join(f"MAP {h} 127.0.0.1" for h in self.hosts) + "\""
         self.process = subprocess.Popen([str(self.exe)], env=env)
         for _ in range(150):

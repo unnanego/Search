@@ -9,7 +9,7 @@ using Windows.System;
 
 namespace Search.App;
 
-public enum PanelKind { None, History, Downloads, Bookmarks, Passwords, Hidden, Archive }
+public enum PanelKind { None, History, Downloads, Bookmarks, Passwords, Hidden, Archive, Extensions }
 
 // The panels (Plate.swift, Recall.swift, Loot.swift, Bookmarks.swift's panel): one shape for all of them, over the
 // page's right side, each searchable and a key away — Ctrl+H, Ctrl+J, Ctrl+Shift+O — and put away with Esc.
@@ -41,7 +41,8 @@ public sealed partial class MainWindow
     private void OpenPanel(PanelKind kind)
     {
         _panel = kind;
-        PanelTitle.Text = kind switch { PanelKind.History => "History", PanelKind.Downloads => "Downloads", PanelKind.Passwords => "Passwords", PanelKind.Hidden => "Hidden on this site", PanelKind.Archive => "Archived tabs", _ => "Bookmarks" };
+        PanelTitle.Text = kind switch { PanelKind.History => "History", PanelKind.Downloads => "Downloads", PanelKind.Passwords => "Passwords", PanelKind.Hidden => "Hidden on this site", PanelKind.Archive => "Archived tabs", PanelKind.Extensions => "Extensions", _ => "Bookmarks" };
+        PanelSearch.PlaceholderText = kind == PanelKind.Extensions ? "Search, or paste a Chrome Web Store link" : "Search";
         PanelSearch.Text = "";
         Panel.Visibility = Visibility.Visible;
         FillPanel();
@@ -85,6 +86,10 @@ public sealed partial class MainWindow
             case PanelKind.Archive:
                 rows = ArchiveRows(words);
                 break;
+            case PanelKind.Extensions:
+                rows = ExtensionRows(words);
+                foot = ("Load a folder…", true);
+                break;
             case PanelKind.Hidden:
                 rows = HiddenRows(words);
                 foot = ("Put everything back", rows.Count > 0);
@@ -94,7 +99,7 @@ public sealed partial class MainWindow
                 break;
         }
         PanelRows.ItemsSource = rows;
-        PanelEmpty.Text = rows.Count > 0 ? "" : words.Length > 0 ? "Nothing matches." : _panel switch { PanelKind.History => "Nowhere yet.", PanelKind.Downloads => "Nothing downloaded yet.", PanelKind.Passwords => "No passwords kept yet.", PanelKind.Hidden => "Nothing hidden on this site.", PanelKind.Archive => "No tab has closed by itself.", _ => "No bookmarks yet." };
+        PanelEmpty.Text = rows.Count > 0 ? "" : words.Length > 0 ? "Nothing matches." : _panel switch { PanelKind.History => "Nowhere yet.", PanelKind.Downloads => "Nothing downloaded yet.", PanelKind.Passwords => "No passwords kept yet.", PanelKind.Hidden => "Nothing hidden on this site.", PanelKind.Archive => "No tab has closed by itself.", PanelKind.Extensions => "No extensions yet. Paste a Chrome Web Store link above, or load a folder.", _ => "No bookmarks yet." };
         PanelFoot.Content = foot.Label;
         PanelFoot.Visibility = foot.Shown ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -109,6 +114,7 @@ public sealed partial class MainWindow
 
     private void TakePanelRow(PanelRow row)
     {
+        if (_panel == PanelKind.Extensions) { TakeExtensionRow(row); return; }
         switch (row.Item)
         {
             case Trace trace: Go(trace.Url, newTab: false); break;
@@ -123,9 +129,10 @@ public sealed partial class MainWindow
 
     private void OnPanelRowAction(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { Tag: PanelRow row }) return;
+        if (sender is not FrameworkElement { Tag: PanelRow row } button) return;
         switch (row)
         {
+            case { Item: Installed item }: ExtensionMenu(item).ShowAt(button); break;
             case { Item: Trace trace }: _history.Forget(trace.Key); FillPanel(); break;
             case { Item: Account account }: _ = ForgetPassword(account); break;
             case { Item: Veil veil }: RestoreVeil(veil); break;
@@ -143,6 +150,7 @@ public sealed partial class MainWindow
         if (_panel == PanelKind.Downloads) { Open(_fetches.FirstOrDefault() is { } last ? Path.GetDirectoryName(last.Path)! : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "\\Downloads"); return; }
         if (_panel == PanelKind.Hidden) { RestoreAllVeils(); return; }
         if (_panel == PanelKind.History) { OpenPanel(PanelKind.Archive); return; }
+        if (_panel == PanelKind.Extensions) { await AddFolder(); return; }
         if (_panel != PanelKind.History) return;
         var sure = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Clear history?", Content = "Every place you've been is forgotten. Open tabs, bookmarks and passwords stay.", PrimaryButtonText = "Clear", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
         if (await sure.ShowAsync() == ContentDialogResult.Primary) { _history.Forget(); FillPanel(); }

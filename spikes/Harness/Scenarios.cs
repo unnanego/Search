@@ -235,6 +235,110 @@ public static class Scenarios
         c.Result["serverHits"] = c.Server.Hosts;
     }
 
+    // Spike 6 (Phase 4): what an extension calls a window, the current one and the last focused one, when every tab
+    // and our popup are WebView2s of their own; whether DevTools tells us each one's window id; and whether
+    // runtime.sendNativeMessage reaches a host registered the way Chrome or Edge reads them.
+    public static async Task Windows(Context c)
+    {
+        var a = new WebView2(); var b = new WebView2(); var p = new WebView2();
+        var grid = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition { Width = new GridLength(300) } } };
+        Grid.SetColumn(b, 1); Grid.SetColumn(p, 2);
+        grid.Children.Add(a); grid.Children.Add(b); grid.Children.Add(p);
+        c.Window.Content = grid;
+        await Activate(c.Window);
+        var env = await Env(c, extensions: true);
+        foreach (var w in new[] { a, b, p }) { await w.EnsureCoreWebView2Async(env); Quiet(w.CoreWebView2); }
+        var folder = Path.Combine(AppContext.BaseDirectory, "extensions", "windows");
+        var ext = await a.CoreWebView2.Profile.AddBrowserExtensionAsync(folder);
+        c.Result["extension"] = new { ext.Id, ext.Name };
+        c.Server.Pages["/a.html"] = Html("<h1>A</h1>", "");
+        c.Server.Pages["/b.html"] = Html("<h1>B</h1>", "");
+        async Task Go(WebView2 w, string url) { var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); void H(CoreWebView2 s, CoreWebView2NavigationCompletedEventArgs e) { s.NavigationCompleted -= H; done.TrySetResult(); } w.CoreWebView2.NavigationCompleted += H; w.CoreWebView2.Navigate(url); await done.Task; }
+        await Go(a, c.Server.Url("a.test", "a.html"));
+        await Go(b, c.Server.Url("b.test", "b.html"));
+        await p.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("window.__shim = location.href");
+        await Go(p, $"chrome-extension://{ext.Id}/popup.html");
+        async Task<object?> Cdp(WebView2 w, string method, object args) { try { return JsonSerializer.Deserialize<JsonElement>(await w.CoreWebView2.CallDevToolsProtocolMethodAsync(method, JsonSerializer.Serialize(args))); } catch (Exception e) { return "error: " + e.Message; } }
+        async Task<object?> Eval(string js) => await Cdp(p, "Runtime.evaluate", new { expression = js, awaitPromise = true, returnByValue = true });
+        c.Result["windowIdA"] = await Cdp(a, "Browser.getWindowForTarget", new { });
+        c.Result["windowIdB"] = await Cdp(b, "Browser.getWindowForTarget", new { });
+        c.Result["windowIdP"] = await Cdp(p, "Browser.getWindowForTarget", new { });
+        c.Result["targetInfoA"] = await Cdp(a, "Target.getTargetInfo", new { });
+        c.Result["shimRanInPopup"] = await Eval("window.__shim ?? null");
+        c.Result["popupWindows"] = await Eval("chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,focused:w.focused,tabs:w.tabs.map(t=>({id:t.id,url:t.url,active:t.active}))})))");
+        c.Result["popupCurrent"] = await Eval("chrome.tabs.query({active:true,currentWindow:true}).then(ts=>ts.map(t=>({id:t.id,windowId:t.windowId,url:t.url})))");
+        c.Result["popupLastFocused"] = await Eval("chrome.tabs.query({active:true,lastFocusedWindow:true}).then(ts=>ts.map(t=>({id:t.id,windowId:t.windowId,url:t.url})))");
+        c.Result["popupOwnTab"] = await Eval("chrome.tabs.getCurrent().then(t=>t&&({id:t.id,windowId:t.windowId}))");
+        a.Focus(FocusState.Programmatic); await Task.Delay(700);
+        c.Result["workerAfterFocusA"] = await Eval("chrome.runtime.sendMessage({q:'focused'})");
+        b.Focus(FocusState.Programmatic); await Task.Delay(700);
+        c.Result["workerAfterFocusB"] = await Eval("chrome.runtime.sendMessage({q:'focused'})");
+        p.Focus(FocusState.Programmatic); await Task.Delay(700);
+        c.Result["workerAfterFocusP"] = await Eval("chrome.runtime.sendMessage({q:'focused'})");
+        // Native messaging: a host manifest under each key a Chromium browser might read, one at a time.
+        var manifest = Path.Combine(c.Opts.Data, "com.search.spike.json");
+        File.WriteAllText(manifest, JsonSerializer.Serialize(new { name = "com.search.spike", description = "spike", path = Path.Combine(folder, "host.bat"), type = "stdio", allowed_origins = new[] { $"chrome-extension://{ext.Id}/" } }));
+        var keys = new[] { @"Software\Google\Chrome\NativeMessagingHosts\com.search.spike", @"Software\Microsoft\Edge\NativeMessagingHosts\com.search.spike", @"Software\Chromium\NativeMessagingHosts\com.search.spike" };
+        var native = new Dictionary<string, object?>();
+        native["none"] = await Eval("chrome.runtime.sendMessage({q:'native',name:'com.search.spike'})");
+        foreach (var key in keys)
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key)) k.SetValue("", manifest);
+            try { native[key] = await Eval("chrome.runtime.sendMessage({q:'native',name:'com.search.spike'})"); }
+            finally { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(key, false); }
+        }
+        c.Result["native"] = native;
+    }
+
+    // Spike 7 (Phase 4): what reinstalling an extension does to what it saved, and whether changed files are picked up.
+    public static async Task Keeper(Context c)
+    {
+        var p = new WebView2();
+        c.Window.Content = new Grid { Children = { p } };
+        await Activate(c.Window);
+        var env = await Env(c, extensions: true);
+        await p.EnsureCoreWebView2Async(env); Quiet(p.CoreWebView2);
+        var source = Path.Combine(AppContext.BaseDirectory, "extensions", "keeper");
+        var folder = Path.Combine(c.Opts.Data, "keeper-copy");
+        void Copy(string version, string marker) { Directory.CreateDirectory(folder); foreach (var f in Directory.GetFiles(source)) File.Copy(f, Path.Combine(folder, Path.GetFileName(f)), true);
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), File.ReadAllText(Path.Combine(source, "manifest.json")).Replace("\"version\": \"1\"", $"\"version\": \"{version}\""));
+            File.AppendAllText(Path.Combine(folder, "worker.js"), $"\nself.MARKER = '{marker}';\n"); }
+        async Task Go(string url) { var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); void H(CoreWebView2 s, CoreWebView2NavigationCompletedEventArgs e) { s.NavigationCompleted -= H; done.TrySetResult(); } p.CoreWebView2.NavigationCompleted += H; p.CoreWebView2.Navigate(url); await done.Task; }
+        async Task<object?> Ask(string id, string js) { await Go($"chrome-extension://{id}/page.html"); try { return JsonSerializer.Deserialize<JsonElement>(await p.CoreWebView2.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new { expression = js, awaitPromise = true, returnByValue = true }))); } catch (Exception e) { return "error: " + e.Message; } }
+        Copy("1", "first");
+        var ext = await p.CoreWebView2.Profile.AddBrowserExtensionAsync(folder);
+        c.Result["id"] = ext.Id;
+        c.Result["set"] = await Ask(ext.Id, "chrome.runtime.sendMessage({q:'set',v:'hello'})");
+        c.Result["got"] = await Ask(ext.Id, "chrome.runtime.sendMessage({q:'get'})");
+        Copy("2", "second");
+        c.Result["afterFileChangeNoReload"] = await Ask(ext.Id, "chrome.runtime.sendMessage({q:'get'})");
+        try { var again = await p.CoreWebView2.Profile.AddBrowserExtensionAsync(folder); c.Result["addAgain"] = new { again.Id, again.IsEnabled }; } catch (Exception e) { c.Result["addAgainError"] = e.Message; }
+        c.Result["afterAddAgain"] = await Ask(ext.Id, "chrome.runtime.sendMessage({q:'get'})");
+        var listed = (await p.CoreWebView2.Profile.GetBrowserExtensionsAsync()).First(e => e.Id == ext.Id);
+        await listed.EnableAsync(false); await listed.EnableAsync(true);
+        Copy("3", "third");
+        await listed.EnableAsync(false); await listed.EnableAsync(true);
+        c.Result["afterDisableEnable"] = await Ask(ext.Id, "chrome.runtime.sendMessage({q:'get'})");
+        Copy("4", "fourth");
+        await listed.RemoveAsync();
+        var back = await p.CoreWebView2.Profile.AddBrowserExtensionAsync(folder);
+        c.Result["afterRemoveAdd"] = await Ask(back.Id, "chrome.runtime.sendMessage({q:'get'})");
+        c.Result["listedAtEnd"] = (await p.CoreWebView2.Profile.GetBrowserExtensionsAsync()).Select(e => new { e.Id, e.Name, e.IsEnabled }).ToArray();
+    }
+
+    // Adds the folders named in --mode (separated by |) and says what each did.
+    public static async Task AddFolder(Context c)
+    {
+        var p = new WebView2();
+        c.Window.Content = new Grid { Children = { p } };
+        await Activate(c.Window);
+        var env = await Env(c, extensions: true);
+        await p.EnsureCoreWebView2Async(env);
+        foreach (var folder in c.Opts.Mode.Split('|'))
+            try { var e = await p.CoreWebView2.Profile.AddBrowserExtensionAsync(folder); c.Result[folder] = new { e.Id, e.Name }; }
+            catch (Exception e) { c.Result[folder] = "error: " + e.GetType().Name + " " + e.Message; }
+    }
+
     // Spike 4: Chromium's own picture in picture, video and document, inside WebView2.
     public static async Task Pip(Context c)
     {

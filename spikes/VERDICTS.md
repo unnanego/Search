@@ -13,6 +13,8 @@ The harness (`spikes/Harness`) is one WinUI 3 app with one scenario per run. It 
 | 3 Startup / memory | **Startup on target.** Live tabs cost ~28 MB each, and Suspend frees ~nothing; closing frees it all, and a closed tab rebuilds in ~60 ms | Sleep closes the WebView2 rather than suspending it |
 | 4 PiP | **Video PiP native**, document PiP missing | `Float` uses Chromium's PiP; no custom window for video |
 | 5 Overlays | **Works.** WinUI draws over WebView2, and caption/passthrough regions work | Omnibox, peek and site card can overlay the page |
+| 6 Windows and focus (Phase 4) | **DevTools names each tab's window**, the same id extensions see; a worker's "current window" is whichever web view last had the keyboard; **native messaging works natively** | A page shim in Search's popups and panels, a worker shim for the focus case; nothing to build for native messaging |
+| 7 Reinstalling (Phase 4) | **Adding again from the same folder reloads and keeps saved data; removing erases it** | Updates and site changes are an add again, never remove + add |
 
 ## 1. Extensions (`extensions`, `extensions-handled`)
 
@@ -90,6 +92,23 @@ Per-tab cost, with each tab on its own site (so each gets its own renderer, as r
 
 - A WinUI `Border` over a WebView2 read back exactly `#FF0000` on screen, and the page beside it `#0000FF`. Composition hosting has no airspace problem, so the omnibox, peek, site card and popovers can draw over the page.
 - `InputNonClientPointerSource.SetRegionRects` with `Caption` and `Passthrough` works with `ExtendsContentIntoTitleBar`. The empty part of the tab strip can drag the window while tabs and buttons in it stay clickable. Real dragging by hand hasn't been checked yet.
+
+## 6. Windows and focus (`windows`, Phase 4)
+
+Two tabs, and a web view of our own showing the extension's popup page, each a WebView2 in the same profile.
+
+- **`Browser.getWindowForTarget`** (DevTools, no target id) on a tab's web view gives its window id, and it's the id the extension's `windows.getAll` reports for that tab. Each web view is its own window, so a window id names one tab.
+- **In our popup**, `tabs.query({active: true, currentWindow: true})` returns the popup itself, and `tabs.getCurrent()` its own one-tab window. A script added with `AddScriptToExecuteOnDocumentCreatedAsync` runs in the extension page's own world before its scripts, so the popup can be told which window the tab in front is in.
+- **In the worker**, `currentWindow`, `lastFocusedWindow` and `windows.getLastFocused` follow whichever web view last had the keyboard: tab A, tab B, or our popup once it has focus. With the popup focused, a worker asked "which tab?" answered with the popup. Hence a worker shim, with Search's pages of the extension saying which window is in front.
+- **Native messaging works with nothing from us.** `runtime.sendNativeMessage` found and ran a host registered under `HKCU\Software\Google\Chrome\NativeMessagingHosts`, under `Microsoft\Edge` and under `Chromium`, each alone, with Chrome's arguments (`chrome-extension://<id>/ --parent-window=0`). Search reads what Chrome reads, as on the Mac. (The probe's registry keys were removed after each try.)
+
+## 7. Reinstalling (`keeper`, Phase 4)
+
+- `AddBrowserExtensionAsync` again on an installed extension's folder **loads its changed files** (new version, new worker code) **and keeps `storage.local`**.
+- Turning it off and on restarts its worker with the new code but keeps the old manifest. Added again while off, it stays off yet still says `IsEnabled: true`, so it has to be switched on as the profile lists it.
+- **`RemoveAsync` erases its saved data.** An update must never be remove + add.
+- Every profile lists two built-in Microsoft extensions (Clipboard, the PDF viewer). Search never removes what it didn't install.
+- Found building Phase 4, not by a spike: **Chromium refuses to load an extension with any file or folder whose name starts with `_`** (reserved for itself), and WebView2 says only "access denied". Search's files in a copy live in `search-browser/`.
 
 ## Changes to WINDOWS-PLAN.md
 

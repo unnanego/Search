@@ -48,6 +48,8 @@ public sealed partial class MainWindow
         passwords.Toggled += (_, _) => _prefs.SavePasswords = passwords.IsOn;
         var little = new ToggleSwitch { Header = "Links from other apps open in a small window", IsOn = _prefs.LittleLinks };
         little.Toggled += (_, _) => _prefs.LittleLinks = little.IsOn;
+        var extensions = new Button { Content = "Extensions…" };
+        extensions.Click += (_, _) => { _settings?.Hide(); OpenPanel(PanelKind.Extensions); };
         var browser = new Button { Content = "Make Search your default browser…" };
         browser.Click += (_, _) => { Registration.Register(); Registration.OpenDefaultApps(); };
         var updates = new TextBlock { Text = Updater.Status ?? "Search checks for a newer version once a day and has it ready for the next launch.", TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
@@ -60,7 +62,7 @@ public sealed partial class MainWindow
             Title = "Settings",
             CloseButtonText = "Done",
             RequestedTheme = Root.ActualTheme,
-            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, spaces, routes, sleep, closing, shield, paused, styles, bookmarks, passwords, little, browser, updates, bench, benchNote } } }
+            Content = new ScrollViewer { Content = new StackPanel { Spacing = 16, MinWidth = 420, Children = { side, theme, engine, custom, spaces, routes, sleep, closing, shield, paused, styles, bookmarks, passwords, extensions, little, browser, updates, bench, benchNote } } }
         };
         try { await _settings.ShowAsync(); }
         finally { _prefs.CustomEngine = custom.Text.Trim(); _settings = null; }

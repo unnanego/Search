@@ -54,6 +54,10 @@ public sealed class Pages
     private readonly Dictionary<Tab, (string? Page, string? Skipper)> _youtube = new();
     private bool _shieldOn = true;
     private IReadOnlyCollection<string> _shieldPaused = [];
+    /// Each profile's extensions brought in step before its first page loads (ExtensionHost.Ready).
+    public Func<CoreWebView2Profile, Task>? Extensions { get; set; }
+    /// Each live tab's window, as extensions number it: the one the DevTools protocol reports for its web view.
+    private readonly Dictionary<Tab, long> _windows = new();
 
     /// Shield on or off, and the sites it's paused on: every profile and every page told.
     public async Task SetShield(bool on, IReadOnlyCollection<string> paused)
@@ -75,6 +79,12 @@ public sealed class Pages
         _youtube[tab] = (await core.AddScriptToExecuteOnDocumentCreatedAsync(Shield.YouTubePage(_shieldPaused)), await world.Add(Shield.YouTubeSkipper(_shieldPaused)));
     }
     private readonly List<string> _scripts = new();
+
+    private readonly List<string> _pageScripts = new();
+
+    /// A script for every page to come in the page's own world, before its scripts; for what must stand in for an API
+    /// the page itself calls (the store's install). It sees what the page sees, so it decides nothing on its own.
+    public void AddPageScript(string source) => _pageScripts.Add(source);
 
     /// A script of Search's own for every page, in the isolated world: those open now and those to come.
     public void AddScript(string source)
@@ -223,6 +233,13 @@ public sealed class Pages
         // The ad blocker before the first request, as the Mac holds the first loads until its list is ready.
         await Shield.Protect(core.Profile, _shieldOn, _shieldPaused);
         await YouTube(tab, core);
+        foreach (var script in _pageScripts) await core.AddScriptToExecuteOnDocumentCreatedAsync(script);
+        // Extensions don't run in private tabs, which have a browser of their own.
+        if (!tab.Private && Extensions is { } extensions)
+        {
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(ExtensionHost.PageShim("tab", null, []));
+            await extensions(core.Profile);
+        }
         _views[tab] = view;
         _building.Remove(tab);
         tab.Live = true;
@@ -271,18 +288,64 @@ public sealed class Pages
             if (e.IsSuccess && !tab.Bench && !tab.Private && Uri.TryCreate(core.Source, UriKind.Absolute, out var url)) Visited?.Invoke(tab, url, core.DocumentTitle);
         };
         // Always handled: a new window WebView2 opens on its own outlives the app and keeps its browser process alive.
-        core.NewWindowRequested += async (_, e) =>
+        core.NewWindowRequested += (_, e) => Adopt(e, tab);
+    }
+
+    /// A new window a page or an extension asked for, as a tab of the row's beside the one it came from.
+    private async void Adopt(CoreWebView2NewWindowRequestedEventArgs e, Tab? from)
+    {
+        var deferral = e.GetDeferral();
+        try
         {
-            var deferral = e.GetDeferral();
-            try
-            {
-                var opened = _browser.Open(null, select: !tab.Bench, after: tab, bench: tab.Bench, @private: tab.Private);
-                var view = await Ensure(opened, navigate: false);
-                e.NewWindow = view.CoreWebView2;
-                e.Handled = true;
-            }
-            finally { deferral.Complete(); }
-        };
+            var opened = _browser.Open(null, select: from is not { Bench: true }, after: from ?? _browser.Selected, bench: from?.Bench ?? false, @private: from?.Private ?? false);
+            var view = await Ensure(opened, navigate: false);
+            e.NewWindow = view.CoreWebView2;
+            e.Handled = true;
+            SurfaceOpened?.Invoke(opened);
+        }
+        catch (Exception x) { System.Diagnostics.Debug.WriteLine(x); }
+        finally { deferral.Complete(); }
+    }
+
+    /// A tab opened from one of Search's surfaces, or by an extension: the popup it came from goes, as Chrome's does.
+    public event Action<Tab>? SurfaceOpened;
+
+    /// The window a tab is to extensions, asked once of its live web view.
+    public async Task<long?> WindowIdOf(Tab tab)
+    {
+        if (_windows.TryGetValue(tab, out var known)) return known;
+        if (CoreOf(tab) is not { } core || await WindowIdOf(core) is not { } id) return null;
+        return _windows[tab] = id;
+    }
+
+    public static async Task<long?> WindowIdOf(CoreWebView2 core)
+    {
+        try { return JsonDocument.Parse(await core.CallDevToolsProtocolMethodAsync("Browser.getWindowForTarget", "{}")).RootElement.GetProperty("windowId").GetInt64(); }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or KeyNotFoundException or JsonException or InvalidOperationException or ObjectDisposedException) { return null; }
+    }
+
+    /// A web view of Search's own for one of an extension's pages (its popup, its side panel), in the profile of the
+    /// tabs it serves, with the page shim at document start. Not a tab: never in the row, the session or the history.
+    public async Task<WebView2> Surface(Panel host, string? store, string shim)
+    {
+        var view = new WebView2 { Opacity = 0, IsHitTestVisible = false };
+        host.Children.Add(view);
+        var environment = await Web.Environment;
+        if (store is not null)
+        {
+            var options = environment.CreateCoreWebView2ControllerOptions();
+            options.ProfileName = store;
+            await view.EnsureCoreWebView2Async(environment, options);
+        }
+        else await view.EnsureCoreWebView2Async(environment);
+        var core = view.CoreWebView2;
+        Privacy.Apply(core.Settings);
+        Paint(core);
+        core.DownloadStarting += (_, e) => { e.Handled = true; DownloadStarted?.Invoke(_browser.Selected ?? new Tab(), e.DownloadOperation); };
+        core.NewWindowRequested += (_, e) => Adopt(e, null);
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(shim);
+        if (Extensions is { } extensions) await extensions(core.Profile);
+        return view;
     }
 
     /// Capture phase, at the window, before anything the page adds; real key presses only (isTrusted), so a page can't
@@ -348,6 +411,7 @@ public sealed class Pages
         if (!_views.Remove(tab, out var view)) return;
         _worlds.Remove(tab);
         _youtube.Remove(tab);
+        _windows.Remove(tab);
         tab.NavigateRequested -= Navigate;
         tab.CommandRequested -= Command;
         tab.Live = false;

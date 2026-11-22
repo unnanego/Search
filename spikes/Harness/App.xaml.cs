@@ -26,6 +26,9 @@ public partial class App : Application
                 "extensions" => Scenarios.Extensions(ctx),
                 "pip" => Scenarios.Pip(ctx),
                 "overlay" => Scenarios.Overlay(ctx),
+                "windows" => Scenarios.Windows(ctx),
+                "keeper" => Scenarios.Keeper(ctx),
+                "addfolder" => Scenarios.AddFolder(ctx),
                 _ => throw new ArgumentException($"unknown scenario {opts.Scenario}")
             };
             var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(opts.Timeout)));

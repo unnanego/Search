@@ -56,7 +56,7 @@ public sealed partial class MainWindow
             case "probe":
                 return Probe();
             // Test runs only, as on the Mac: a key as the window takes it, and typing into the field or find.
-            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" when !Store.Testing:
+            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" or "extensions" or "extinstall" or "extconfirm" or "extpress" or "extpopup" or "extpanel" or "extremove" or "extenable" or "extpin" or "extsites" or "extreload" or "extupdate" or "notice" when !Store.Testing:
                 return BenchServer.Error($"{Text("do")} only works on a --test run");
             case "press":
                 if (Text("keys") is not { } combo) return BenchServer.Error("press needs keys, e.g. ctrl+t");
@@ -111,6 +111,66 @@ public sealed partial class MainWindow
                 _routes.On = true;
                 _routes.Set(site, to.Id);
                 return new JsonObject { ["ok"] = true };
+            case "extensions":
+                return new JsonObject
+                {
+                    ["extensions"] = new JsonArray(_extensions.List.Items.Select(i => (JsonNode)new JsonObject
+                    {
+                        ["id"] = i.Id, ["name"] = i.Name, ["version"] = i.Version, ["enabled"] = i.Enabled, ["pinned"] = i.Pinned == true, ["fromStore"] = i.FromStore, ["source"] = i.Source,
+                        ["error"] = _extensions.Errors.GetValueOrDefault(i.Id), ["button"] = _extensionButtons.ContainsKey(i.Id), ["sites"] = _extensions.SitesOf(i.Id).Mode.ToString().ToLowerInvariant()
+                    }).ToArray()),
+                    ["bar"] = ExtensionsBar.Visibility == Visibility.Visible, ["busy"] = new JsonArray(_extensions.Busy.Select(b => (JsonNode)b).ToArray())
+                };
+            case "extinstall":
+                var ask = Flag("ask");
+                if (Text("folder") is { } extFolder) { var adding = AddFolder(extFolder, ask); if (!ask) await adding; }
+                else if (Text("store") is { } storeId) { var adding = AddFromStore(storeId, ask); if (!ask) await adding; }
+                else return BenchServer.Error("extinstall needs a folder or a store id");
+                return new JsonObject { ["ok"] = true, ["notice"] = LastNotice };
+            case "extconfirm":
+                if (_confirming is not { } confirming) return BenchServer.Error("nothing is being asked");
+                confirming.TrySetResult(Flag("yes"));
+                return new JsonObject { ["ok"] = true };
+            case "extpress":
+                if (Text("ext") is not { } pressed) return BenchServer.Error("extpress needs ext");
+                var frontBefore = await FrontWindow();
+                return new JsonObject { ["answer"] = (await Press(pressed, _extensionButtons.GetValueOrDefault(pressed) ?? _puzzle))?.DeepClone(), ["popup"] = PopupState(), ["front"] = frontBefore };
+            case "extpopup":
+                var popupState = PopupState();
+                if (Text("eval") is { } popupEval && _popup is { } shown) popupState["value"] = await RunAny(shown.View.CoreWebView2, popupEval);
+                return popupState;
+            case "extpanel":
+                if (Text("open") is { } sideId) await OpenSide(sideId);
+                if (Flag("close")) CloseSide();
+                var side = new JsonObject { ["open"] = _side is not null, ["ext"] = _side?.Id, ["url"] = _side?.View.CoreWebView2?.Source, ["width"] = SidePanel.ActualWidth };
+                if (Text("eval") is { } sideEval && _side is { } open) side["value"] = await RunAny(open.View.CoreWebView2, sideEval);
+                return side;
+            case "extremove":
+                if (Text("ext") is not { } removing) return BenchServer.Error("extremove needs ext");
+                await _extensions.Remove(removing);
+                return new JsonObject { ["ok"] = true };
+            case "extenable":
+                if (Text("ext") is not { } enabling) return BenchServer.Error("extenable needs ext");
+                await _extensions.SetEnabled(enabling, !Flag("off"));
+                return new JsonObject { ["ok"] = true };
+            case "extpin":
+                if (Text("ext") is not { } pinning) return BenchServer.Error("extpin needs ext");
+                _extensions.SetPinned(pinning, !Flag("off"));
+                return new JsonObject { ["ok"] = true };
+            case "extsites":
+                if (Text("ext") is not { } siting) return BenchServer.Error("extsites needs ext");
+                var hosts = (request["hosts"] as JsonArray)?.Select(h => h?.GetValue<string>()).OfType<string>().ToList() ?? [];
+                await _extensions.SetSites(siting, _extensions.SitesOf(siting) with { Mode = hosts.Count > 0 ? SiteMode.Some : SiteMode.All, Hosts = hosts });
+                return new JsonObject { ["ok"] = true };
+            case "extreload":
+                if (Text("ext") is not { } reloading) return BenchServer.Error("extreload needs ext");
+                await Reload(reloading);
+                return new JsonObject { ["ok"] = true, ["notice"] = LastNotice };
+            case "extupdate":
+                await CheckNow();
+                return new JsonObject { ["ok"] = true, ["notice"] = LastNotice };
+            case "notice":
+                return new JsonObject { ["notice"] = LastNotice, ["shown"] = Keeping.Visibility == Visibility.Visible };
             case "edge":
                 SlideOut();
                 return new JsonObject { ["ok"] = _slidOut };
@@ -150,6 +210,15 @@ public sealed partial class MainWindow
                 if (Text("method") is not { } method) return BenchServer.Error("cdp needs a method");
                 var cdpCore = (await _pages.Ensure(found)).CoreWebView2;
                 return new JsonObject { ["value"] = JsonNode.Parse(await cdpCore.CallDevToolsProtocolMethodAsync(method, request["params"]?.ToJsonString() ?? "{}")) };
+            case "trustedclick" when Store.Testing:
+                // A click the page sees as real (isTrusted), through the DevTools protocol, at the element's middle.
+                if (Text("selector") is not { } trusted) return BenchServer.Error("trustedclick needs a selector");
+                var clickCore = (await _pages.Ensure(found)).CoreWebView2;
+                var where = await clickCore.ExecuteScriptAsync($"(()=>{{const el=document.querySelector({JsonSerializer.Serialize(trusted)});if(!el)return null;el.scrollIntoView({{block:'center'}});const r=el.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]}})()");
+                if (JsonNode.Parse(where) is not JsonArray { Count: 2 } point) return BenchServer.Error($"nothing matches {trusted}");
+                foreach (var type in new[] { "mousePressed", "mouseReleased" })
+                    await clickCore.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", JsonSerializer.Serialize(new { type, x = point[0]!.GetValue<double>(), y = point[1]!.GetValue<double>(), button = "left", clickCount = 1 }));
+                return new JsonObject { ["ok"] = true };
             case "world" when Store.Testing:
                 if (Text("expression") is not { } expression) return BenchServer.Error("world needs an expression");
                 await _pages.Ensure(found);
@@ -240,5 +309,11 @@ public sealed partial class MainWindow
         ["panes"] = new JsonArray(_pages.Panes.Select(p => (JsonNode)new JsonObject { ["id"] = p.Tab.ShortId, ["x"] = p.Rect.X, ["y"] = p.Rect.Y, ["w"] = p.Rect.Width, ["h"] = p.Rect.Height }).ToArray()),
         ["tabs"] = _browser.Ordinary.Count(),
         ["windows"] = new JsonArray(new JsonObject { ["kind"] = "browser", ["title"] = Title, ["visible"] = AppWindow.IsVisible, ["frame"] = new JsonArray(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height) })
+    };
+
+    private JsonObject PopupState() => new()
+    {
+        ["open"] = _popup is not null, ["ext"] = _popup?.Id, ["url"] = _popup?.View.CoreWebView2?.Source, ["width"] = PopupCard.Width, ["height"] = PopupCard.Height,
+        ["shown"] = PopupLayer.Visibility == Visibility.Visible && PopupCard.Opacity > 0
     };
 }
