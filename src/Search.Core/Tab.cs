@@ -23,7 +23,8 @@ public sealed class Tab : Observable
     public bool Private { get; init; }
     /// A peek at a link (Peek.swift): a page over the page, not in the row until it's kept.
     public bool Peek { get; set; }
-    private Guid? _pinId, _groupId;
+    private Guid? _pinId, _groupId, _folder;
+    private bool _listed;
     private string? _letter;
 
     /// A pin (Pins.swift): its identity, the letter or icon it wears, the page it was pinned at. Null for a tab.
@@ -31,12 +32,21 @@ public sealed class Tab : Observable
     public string? Letter { get => _letter; set => Set(ref _letter, value); }
     public Uri? Home { get; set; }
     public bool Pinned => _pinId is not null;
+    /// A pin kept as a row under the squares (Prefs.PinRows), not a square.
+    public bool Listed { get => _listed; set => Set(ref _listed, value); }
+    /// For a pinned row, the folder among the pinned rows that holds it (PinFolders.cs).
+    public Guid? Folder { get => _folder; set => Set(ref _folder, value); }
+    /// The split a pin was pinned in on the Mac (PinDef.Pair), kept so it isn't lost when this window writes pins.json.
+    public Guid? PinPair { get; set; }
     /// The tab group it's in (TabGroup.swift), if any.
     public Guid? GroupId { get => _groupId; set => Set(ref _groupId, value); }
     /// Playing sound right now: a tab that is isn't put to sleep or closed.
     public bool Audible { get; set; }
     /// Where the page was scrolled to when it was put to sleep, to go back to when it wakes.
     public (double X, double Y)? Scroll { get; set; }
+    /// Its page's sessionStorage when it was put to sleep, as Sleep.KeepSession has it, until the woken page has it back
+    /// (KeptSession.swift). Held in memory only, never written to the session file.
+    public string? KeptSession { get; set; }
     /// The WebView2 profile its pages use: its space's own sign-ins (Spaces.StoreName), or null for the default.
     public string? Store { get; init; }
     public DateTimeOffset? Touched { get; set; }

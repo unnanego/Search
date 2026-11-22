@@ -63,6 +63,8 @@ public partial class App : Application
             Syncing = new SyncDriver(Shared);
             Syncing.Start(first.DispatcherQueue);
             Bench();
+            Launcher.Start(Shared.Prefs, first.DispatcherQueue);
+            StartLive(first.DispatcherQueue);
             _ = Updater.CheckSoon();
         }
         catch (Exception e) { Log(e); throw; }
@@ -109,6 +111,28 @@ public partial class App : Application
         SaveWindows(now: true);
     }
 
+    /// Live folders' feeds (LiveFolders.cs): fetched a little after launch and every half hour while folders in
+    /// pinned rows are on; nothing is fetched with them off.
+    public static LiveFolders? Live { get; private set; }
+    private static LiveSchedule? _liveSchedule;
+    private static Microsoft.UI.Dispatching.DispatcherQueueTimer? _liveTimer;
+
+    private static void StartLive(Microsoft.UI.Dispatching.DispatcherQueue queue)
+    {
+        Live = new LiveFolders(Shared.Folders, new LiveFetch());
+        _liveSchedule = new LiveSchedule();
+        _liveTimer = queue.CreateTimer();
+        _liveTimer.IsRepeating = false;
+        _liveTimer.Tick += (_, _) =>
+        {
+            if (_liveSchedule.Due(Shared.Prefs.ShowsPinFolders)) _ = Live.RefreshAll(true);
+            _liveTimer.Interval = _liveSchedule.Wait > TimeSpan.FromSeconds(1) ? _liveSchedule.Wait : TimeSpan.FromSeconds(1);
+            _liveTimer.Start();
+        };
+        _liveTimer.Interval = _liveSchedule.Wait > TimeSpan.Zero ? _liveSchedule.Wait : TimeSpan.FromSeconds(1);
+        _liveTimer.Start();
+    }
+
     /// Exit (Ctrl+Shift+Q): every window written down as it is, so the next launch brings them all back.
     public static void Quit()
     {
@@ -119,6 +143,7 @@ public partial class App : Application
         Shared.Profiles.FlushHistories();
         _bench?.Dispose();
         Agents?.Dispose();
+        Launcher.Stop();
         Disk.Flush().Wait(TimeSpan.FromSeconds(3));
         foreach (var window in Windows.ToList()) window.Close();
         Current.Exit();

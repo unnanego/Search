@@ -43,7 +43,8 @@ public sealed partial class LittleWindow : Window
         root.RequestedTheme = prefs.Theme switch { Theme.Light => ElementTheme.Light, Theme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
         Content = root;
         SetTitleBar(_site);
-        _pages = new Pages(_browser, stage) { Theme = prefs.Theme, Keys = new[] { "ctrl+w", "ctrl+o", "f5", "ctrl+r" } };
+        _pages = new Pages(_browser, stage) { Theme = prefs.Theme, Keys = new[] { "ctrl+w", "ctrl+o", "f5", "ctrl+r" }, TriesHttpsFirst = () => prefs.TriesHttpsFirst };
+        _pages.AskWhereToSave = suggested => MainWindow.AskWhere(this, suggested);
         _ = _pages.SetShield(prefs.Shield, prefs.ShieldPaused);
         _pages.KeyPressed += (_, combo) => Key(combo);
         _pages.TitleChanged += (_, _) => Line();

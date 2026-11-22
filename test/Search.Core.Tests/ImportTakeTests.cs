@@ -9,12 +9,17 @@ public class ImportTakeTests
 
     private static Uri U(string text) => new(text);
 
-    private static (ImportTarget Target, Spaces Spaces, Pins Pins, PinFolders Folders) Target(bool rows = false, bool folders = false)
+    /// The window's profile (Personal) and the space on screen (the first), with profiles to rehome it. Its row is
+    /// untouched unless told: session.json is every test's, so it isn't the row asked.
+    private static (ImportTarget Target, Spaces Spaces, Pins Pins, PinFolders Folders) Target(bool rows = false, bool folders = false) => Target(out _, rows, folders);
+
+    private static (ImportTarget Target, Spaces Spaces, Pins Pins, PinFolders Folders) Target(out Profiles profiles, bool rows = false, bool folders = false)
     {
-        var spaces = new Spaces(TempStore.Unique("spaces"), new Dictionary<string, string>());
+        profiles = new Profiles(TempStore.Unique("profiles"));
+        var spaces = new Spaces(TempStore.Unique("spaces"), new Dictionary<string, string>(), profiles.HomeOf, profiles.Rehome);
         var pins = new Pins(TempStore.Unique("pins"));
         var pinFolders = new PinFolders(TempStore.Unique("pin-folders"));
-        return (new ImportTarget(spaces, pins, pinFolders, Spaces.PersonalProfile, Space.FirstId) { ListsPins = rows, PinFolders = folders }, spaces, pins, pinFolders);
+        return (new ImportTarget(spaces, pins, pinFolders, Spaces.PersonalProfile, Space.FirstId) { ListsPins = rows, PinFolders = folders, Untouched = _ => true }, spaces, pins, pinFolders);
     }
 
     private static ArcSidebar Arc(string? profile = null) => Search.Core.Arc.Parse(Encoding.UTF8.GetBytes(ImportArcTests.Sidebar), profile)!;
@@ -55,9 +60,12 @@ public class ImportTakeTests
         var taken = ImportTake.Sidebar(Arc(), target);
         Assert.Equal((2, 2, 3), (taken.Spaces, taken.Pins, taken.Tabs));
         Assert.True(spaces.UsesSpaces);
+        // The first space, never touched, gave its place to them.
         var made = spaces.Of(Spaces.PersonalProfile);
-        Assert.Equal(["Personal", "Work", "Raycast"], made.Select(s => s.Name));
-        var work = made[1];
+        Assert.Equal(["Work", "Raycast"], made.Select(s => s.Name));
+        Assert.Null(spaces.Find(Space.FirstId));
+        var work = made[0];
+        Assert.Equal(work.Id, spaces.Home(Spaces.PersonalProfile));
         Assert.Equal(("briefcase", true), (work.Symbol, work.SharesSignIns == true));
         Assert.Equal(["https://mail.google.com/"], pins.Defs(work.Id).Select(p => p.Home));
         Assert.Equal("M", pins.Defs(work.Id)[0].Letter);
@@ -71,7 +79,80 @@ public class ImportTakeTests
         // Again: nothing twice.
         var again = ImportTake.Sidebar(Arc(), target);
         Assert.Equal((0, 0, 0), (again.Spaces, again.Pins, again.Tabs));
-        Assert.Equal(3, spaces.Of(Spaces.PersonalProfile).Count);
+        Assert.Equal(2, spaces.Of(Spaces.PersonalProfile).Count);
+    }
+
+    [Fact]
+    public void AHomeWithAnythingInItStaysBesideThem()
+    {
+        // A pin, a folder of pinned rows, or a tab that isn't blank: the first space stays, and stays the home.
+        foreach (var touch in new Action<Pins, PinFolders>[]
+        {
+            (pins, _) => pins.Set(Space.FirstId, [new PinDef(Guid.NewGuid(), "M", "https://mine.example/", "Mine")]),
+            (_, folders) => folders.Set(Space.FirstId, [new PinFolder(Guid.NewGuid(), "Mine")]),
+        })
+        {
+            var (target, spaces, pins, folders) = Target();
+            touch(pins, folders);
+            ImportTake.Sidebar(Arc(), target);
+            Assert.Equal(["Personal", "Work", "Raycast"], spaces.Of(Spaces.PersonalProfile).Select(s => s.Name));
+        }
+        var (touched, kept, _, _) = Target();
+        var asked = new List<Guid>();
+        ImportTake.Sidebar(Arc(), touched with { Untouched = id => { asked.Add(id); return false; } });
+        Assert.Equal([Space.FirstId], asked);
+        Assert.Equal(Space.FirstId, kept.Home(Spaces.PersonalProfile));
+        Assert.Equal(3, kept.Of(Spaces.PersonalProfile).Count);
+    }
+
+    [Fact]
+    public void TheWindowLeavesTheHomeBeforeItGoesAndAnotherProfilesSpacesLeaveItBe()
+    {
+        var (target, spaces, _, _) = Target(out var profiles);
+        var left = new List<(Guid Space, bool There)>();
+        ImportTake.Sidebar(Arc(), target with { Leaving = id => left.Add((id, spaces.Find(id) is not null)) });
+        Assert.Equal([(Space.FirstId, true)], left);
+        Assert.Equal(spaces.Of(Spaces.PersonalProfile)[0].Id, profiles.HomeOf(Profile.PersonalId));
+        // Only another profile's spaces came: this one's home is nobody's to replace.
+        var (only, other, _, _) = Target();
+        var club = Guid.NewGuid();
+        ImportTake.Sidebar(Arc("Profile 1"), only with { ProfileFor = _ => club });
+        Assert.Equal(Space.FirstId, other.Home(Spaces.PersonalProfile));
+    }
+
+    [Fact]
+    public void ALoneArcSpaceNamesTheUntouchedFirstSpace()
+    {
+        var (target, spaces, _, _) = Target();
+        var taken = ImportTake.Sidebar(Arc("Profile 1"), target);
+        Assert.Equal(0, taken.Spaces);
+        Assert.False(spaces.UsesSpaces);
+        var first = spaces.Find(Space.FirstId)!;
+        Assert.Equal(("Raycast", "lightbulb"), (first.Name, first.Icon));
+        Assert.Equal([Space.FirstId], spaces.Of(Spaces.PersonalProfile).Select(s => s.Id));
+        // Named, or given an icon or a colour, it is the user's: it keeps them.
+        foreach (var change in new Action<Spaces>[] { s => s.Rename(Space.FirstId, "Mine"), s => s.SetIcon(Space.FirstId, "book"), s => s.SetColour(Space.FirstId, 2) })
+        {
+            var (again, mine, _, _) = Target();
+            change(mine);
+            var before = mine.Find(Space.FirstId);
+            ImportTake.Sidebar(Arc("Profile 1"), again);
+            Assert.Equal(before, mine.Find(Space.FirstId));
+        }
+    }
+
+    [Fact]
+    public async Task ABlankSessionIsNoTabButAnEmptyOne()
+    {
+        var space = Guid.NewGuid();
+        Assert.True(ImportTake.BlankSession(space));
+        await Session.Write(new Session.Shape([new("", ""), new("about:blank", "")], 0), now: true, space: space);
+        Assert.True(ImportTake.BlankSession(space));
+        await Session.Write(new Session.Shape([new("about:blank", "") { Pin = "M" }], 0), now: true, space: space);
+        Assert.False(ImportTake.BlankSession(space));
+        await Session.Write(new Session.Shape([new("https://saved.example/", "Saved")], 0), now: true, space: space);
+        Assert.False(ImportTake.BlankSession(space));
+        Session.Erase(space);
     }
 
     [Fact]

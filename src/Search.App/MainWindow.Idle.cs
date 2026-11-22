@@ -56,8 +56,11 @@ public sealed partial class MainWindow
     private async Task PutToSleep(Tab tab)
     {
         if (await _pages.Evaluate(tab, Sleep.ReadScroll) is System.Text.Json.Nodes.JsonArray { Count: 2 } at && at[0]?.GetValue<double>() is { } x && at[1]?.GetValue<double>() is { } y && (x > 0 || y > 0)) tab.Scroll = (x, y);
+        // Its sessionStorage, for the web view that wakes it (Sleep.KeepSession); never a private tab's.
+        var session = tab.Private ? null : await _pages.Evaluate(tab, Sleep.ReadSession) is System.Text.Json.Nodes.JsonValue read && read.TryGetValue<string>(out var json) ? json : null;
         // Checked again after asking the page: it may have been chosen, or started playing, meanwhile.
-        if (_pages.OnScreen.Contains(tab) || tab.Audible || tab.Loading) return;
+        if (_pages.OnScreen.Contains(tab) || tab.Audible || tab.Loading || !tab.Live) return;
+        tab.KeptSession = Sleep.KeepSession(session, tab.Private);
         _pages.Sleep(tab);
     }
 

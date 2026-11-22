@@ -25,14 +25,17 @@ public class SpacesTests
          {"id":"{{ClubOwn}}","name":"Secret","colour":0,"icon":"heart","sharesSignIns":false,"profile":"{{Club}}"}]
         """;
 
-    private static (Spaces Spaces, string File, Dictionary<string, string> Settings) Fresh(string? contents = null, Dictionary<string, string>? settings = null, Func<Guid, Guid?>? homes = null)
+    private static (Spaces Spaces, string File, Dictionary<string, string> Settings) Fresh(string? contents = null, Dictionary<string, string>? settings = null, Func<Guid, Guid?>? homes = null, Action<Guid, Guid>? rehome = null)
     {
         var file = TempStore.Unique("spaces");
         Directory.CreateDirectory(Store.Folder);
         if (contents is not null) File.WriteAllText(Store.File(file), contents);
         settings ??= [];
-        return (new Spaces(file, settings, homes), file, settings);
+        return (new Spaces(file, settings, homes, rehome), file, settings);
     }
+
+    /// Each profile's home as profiles.json keeps it, changed as a deletion rehomes it: Club's at ClubHome to start.
+    private static Dictionary<Guid, Guid> Homes() => new() { [G(Club)] = G(ClubHome) };
 
     private static Guid G(string text) => Guid.Parse(text);
     private static Guid? ClubHomes(Guid profile) => profile == G(Club) ? G(ClubHome) : null;
@@ -275,6 +278,97 @@ public class SpacesTests
         spaces.Erased(G(Work));
         Assert.Equal([G(Play), G(ClubOwn)], spaces.Erasing);
         Assert.False(File.Exists(SessionFile(G(ClubOwn))));
+    }
+
+    [Fact]
+    public async Task AnySpaceCanGoTheFirstIncludedAndTheNextBecomesTheHome()
+    {
+        var homes = Homes();
+        var (spaces, file, settings) = Fresh(MacFile, homes: p => homes.TryGetValue(p, out var h) ? h : null, rehome: (p, s) => homes[p] = s);
+        spaces.UsesSpaces = true;
+        await Session.Write(new Session.Shape([new("https://example.com/", "Example")], 0), now: true, Space.FirstId);
+        Assert.True(spaces.CanRemove(Space.FirstId));
+        Assert.True(spaces.Remove(Space.FirstId));
+        // Work, next in the order, is the home now, and keeps the store it had: from before the sign-in choice, it is
+        // marked as having its own. The first space's session is emptied, not removed; its store was the default one,
+        // never erased.
+        Assert.Equal(G(Work), homes[Spaces.PersonalProfile]);
+        Assert.Equal(G(Work), spaces.Home(Spaces.PersonalProfile));
+        Assert.Equal([G(Work), G(Play)], spaces.Of(Spaces.PersonalProfile).Select(s => s.Id));
+        Assert.Null(spaces.Find(Space.FirstId));
+        Assert.Equal(G(Work), spaces.Current);
+        Assert.Equal(Work, settings["space.current"]);
+        Assert.False(spaces.Find(G(Work))!.SharesSignIns);
+        Assert.True(spaces.OwnsStore(G(Work)));
+        Assert.Equal(Work, spaces.StoreName(G(Work)));
+        Assert.Empty(spaces.Erasing);
+        Assert.True(File.Exists(SessionFile(Space.FirstId)));
+        Assert.Empty(Session.Read(Space.FirstId).Tabs);
+        var written = await Written(file);
+        Assert.DoesNotContain(Space.FirstId, written.Select(s => s.Id));
+        Assert.Equal(false, written.Single(s => s.Id == G(Work)).SharesSignIns);
+
+        // Read again, it stays gone: Personal's home is a space of the list. An older Search, which has Personal at
+        // home in the first space, reads it back at the front.
+        var again = new Spaces(file, settings, p => homes.TryGetValue(p, out var h) ? h : null);
+        Assert.Equal([G(Work), G(Play)], again.Of(Spaces.PersonalProfile).Select(s => s.Id));
+        again.UsesSpaces = false;
+        Assert.Equal((Spaces.PersonalProfile, G(Work)), again.Start());
+        Assert.Equal([Space.FirstId, G(Work), G(Play)], new Spaces(file, settings).Of(Spaces.PersonalProfile).Select(s => s.Id));
+        // A home that isn't in the list (gone elsewhere) is the first there is, and the first space comes back.
+        homes[Spaces.PersonalProfile] = Guid.NewGuid();
+        Assert.Equal([Space.FirstId, G(Work), G(Play)], new Spaces(file, settings, p => homes.TryGetValue(p, out var h) ? h : null).Of(Spaces.PersonalProfile).Select(s => s.Id));
+
+        // The last of a profile's spaces stays: it goes with the profile.
+        Assert.True(spaces.Remove(G(Work)));
+        Assert.Equal(G(Play), homes[Spaces.PersonalProfile]);
+        Assert.Equal(G(Play), spaces.Current);
+        Assert.False(spaces.CanRemove(G(Play)));
+        Assert.False(spaces.Remove(G(Play)));
+        // Work had a store of its own; Play, the home now, kept its own too.
+        Assert.Equal([G(Work)], spaces.Erasing);
+        Assert.Equal(false, spaces.Find(G(Play))!.SharesSignIns);
+    }
+
+    [Fact]
+    public void AnotherProfilesHomeGoesWithNothingErasedAndTheSpaceThatTakesItKeepsItsStore()
+    {
+        var homes = Homes();
+        var (spaces, _, _) = Fresh(MacFile, homes: p => homes.TryGetValue(p, out var h) ? h : null, rehome: (p, s) => homes[p] = s);
+        Assert.Equal(Club, spaces.StoreName(G(ClubHome)));
+        Assert.True(spaces.Remove(G(ClubHome)));
+        // The home shared the profile's store, which stays; Secret, the home now, has its own still.
+        Assert.Equal(G(ClubOwn), homes[G(Club)]);
+        Assert.Empty(spaces.Erasing);
+        Assert.Equal(ClubOwn, spaces.StoreName(G(ClubOwn)));
+        Assert.False(spaces.Remove(G(ClubOwn)));
+        // Personal's first space, signed in with a space that shares it: that one takes the default store on.
+        var shared = spaces.Add("Shared")!;
+        Assert.True(spaces.Remove(Space.FirstId));
+        Assert.True(spaces.Remove(G(Work)));
+        Assert.True(spaces.Remove(G(Play)));
+        Assert.Equal(shared.Id, homes[Spaces.PersonalProfile]);
+        Assert.True(spaces.Find(shared.Id)!.SharesSignIns);
+        Assert.Null(spaces.StoreName(shared.Id));
+        Assert.Equal([G(Work), G(Play)], spaces.Erasing);
+    }
+
+    [Fact]
+    public void AHomeFromBeforeTheSignInChoiceIsTheProfilesStoreAndTheOneMarkedOwnIsItsOwn()
+    {
+        var file = $$"""[{"id":"{{First}}","name":"Personal","colour":0},{"id":"{{ClubHome}}","name":"Club","colour":0,"profile":"{{Club}}"},{"id":"{{ClubOwn}}","name":"Secret","colour":0,"profile":"{{Club}}"}]""";
+        var homes = Homes();
+        var (spaces, _, _) = Fresh(file, homes: p => homes.TryGetValue(p, out var h) ? h : null, rehome: (p, s) => homes[p] = s);
+        Assert.False(spaces.OwnsStore(G(ClubHome)));
+        Assert.True(spaces.OwnsStore(G(ClubOwn)));
+        // Secret, from before the choice, becomes the home: marked as having its own, it keeps it.
+        Assert.True(spaces.Remove(G(ClubHome)));
+        Assert.Equal(false, spaces.Find(G(ClubOwn))!.SharesSignIns);
+        Assert.True(spaces.OwnsStore(G(ClubOwn)));
+        // Without anything to rehome a profile, its home stays.
+        var (fixedHomes, _, _) = Fresh(file, homes: ClubHomes);
+        Assert.False(fixedHomes.CanRemove(G(ClubHome)));
+        Assert.True(fixedHomes.CanRemove(G(ClubOwn)));
     }
 
     [Fact]

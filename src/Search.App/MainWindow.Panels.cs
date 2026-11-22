@@ -34,6 +34,33 @@ public sealed partial class MainWindow
             // A download shows itself once, as it starts; nothing else is opened for you.
             if (_panel == PanelKind.None) OpenPanel(PanelKind.Downloads); else if (_panel == PanelKind.Downloads) FillPanel();
         };
+        _pages.AskWhereToSave = AskWhereToSave;
+    }
+
+    /// A test run's answer to the save picker, from the bench (saveas): a path, or "" for Cancel. Null shows the picker.
+    private string? _saveAnswer;
+    private int _savesAsked;
+
+    private Task<string?> AskWhereToSave(string suggested)
+    {
+        if (!Store.Testing || _saveAnswer is not { } answer) return AskWhere(this, suggested);
+        _savesAsked++;
+        return Task.FromResult<string?>(answer.Length > 0 ? answer : null);
+    }
+
+    /// The save picker for a download whose folder can't be written to, at the Downloads folder, named as WebView2
+    /// would have named it. Null when cancelled.
+    public static async Task<string?> AskWhere(Window owner, string suggested)
+    {
+        var name = Path.GetFileName(suggested);
+        var extension = Path.GetExtension(name);
+        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.Downloads, SuggestedFileName = Path.GetFileNameWithoutExtension(name) };
+        picker.FileTypeChoices.Add(extension.Length > 0 ? extension[1..].ToUpperInvariant() + " file" : "File", [extension.Length > 0 ? extension : "."]);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(owner));
+        if (await picker.PickSaveFileAsync() is not { } file) return null;
+        // The picker leaves an empty file where you chose; the download is the one to make it.
+        try { if (new FileInfo(file.Path) is { Exists: true, Length: 0 }) File.Delete(file.Path); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return file.Path;
     }
 
     private void TogglePanel(PanelKind kind) { if (_panel == kind) ClosePanel(); else OpenPanel(kind); }

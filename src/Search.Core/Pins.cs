@@ -25,6 +25,9 @@ public sealed record PinDef(Guid Id, string Letter, string Home, string Title)
     public bool? Listed { get; init; }
     /// The folder among the pinned rows that holds it (PinFolders.cs), null at the top of them. Written only when it is in one.
     public Guid? Folder { get; init; }
+    /// The Split View it was pinned in, shared with the other pins of that split (the Mac's "pin a split as a split").
+    /// This build doesn't draw pinned splits yet; the field is kept so a file the Mac wrote keeps it.
+    public Guid? Pair { get; init; }
 }
 
 /// What the pin rules need of a window's tab, and what they hand back for it.
@@ -40,6 +43,8 @@ public sealed record PinnedTab(Guid Id)
     public bool Everywhere { get; init; }
     /// For a pinned row, the folder that holds it.
     public Guid? Folder { get; init; }
+    /// The split it was pinned in (PinDef.Pair), carried through as it came.
+    public Guid? Pair { get; init; }
     /// For a pin, the page it was pinned at.
     public string? Home { get; init; }
     /// Where the tab is now, asleep or not (Tab.Url's AbsoluteUri).
@@ -238,7 +243,7 @@ public sealed class Pins
             var kept = tab.PinId is null ? tab with { PinId = Guid.NewGuid() } : tab;
             made.Add(kept);
             defs.Add(new PinDef(kept.PinId!.Value, letter, kept.Home ?? kept.Url ?? "", kept.Title)
-                { Name = kept.Name, Listed = kept.Listed ? true : null, Folder = kept.Listed && !kept.Everywhere ? kept.Folder : null });
+                { Name = kept.Name, Listed = kept.Listed ? true : null, Folder = kept.Listed && !kept.Everywhere ? kept.Folder : null, Pair = kept.Pair });
         }
         return (defs, made);
     }
@@ -254,7 +259,7 @@ public sealed class Pins
         var matched = Match(pinned, defs, t => t.PinId, t => t.Pin, t => t.Home);
         var made = matched.Select(m => (m.Tab ?? new PinnedTab(Guid.NewGuid()) { Fresh = true, Url = m.Def.Home, Title = m.Def.Title }) with
         {
-            PinId = m.Def.Id, Everywhere = shared.Contains(m.Def.Id), Pin = m.Def.Letter, Name = m.Def.Name, Listed = m.Def.Listed == true, Folder = m.Def.Folder, Home = m.Def.Home,
+            PinId = m.Def.Id, Everywhere = shared.Contains(m.Def.Id), Pin = m.Def.Letter, Name = m.Def.Name, Listed = m.Def.Listed == true, Folder = m.Def.Folder, Pair = m.Def.Pair, Home = m.Def.Home,
         }).ToList();
         var taken = matched.Where(m => m.Tab is not null).Select(m => m.Tab!.Id).ToHashSet();
         var gone = pinned.Where(t => !taken.Contains(t.Id)).Select(t => t.Id).ToList();
@@ -402,6 +407,7 @@ public sealed class Pins
             if (d.Name is { } name) w.WriteString("name", name);
             if (d.Listed is { } listed) w.WriteBoolean("listed", listed);
             if (d.Folder is { } folder) SwiftJson.WriteUuid(w, "folder", folder);
+            if (d.Pair is { } pair) SwiftJson.WriteUuid(w, "pair", pair);
             w.WriteEndObject();
         }
         w.WriteEndArray();
@@ -459,6 +465,8 @@ public sealed class Pins
         if (SwiftJson.Has(e, "listed", out var s) && (listed = SwiftJson.Bool(s)) is null) return null;
         Guid? folder = null;
         if (SwiftJson.Has(e, "folder", out var f) && (folder = SwiftJson.Uuid(f)) is null) return null;
-        return new PinDef(id, letter, home, title) { Name = name, Listed = listed, Folder = folder };
+        Guid? pair = null;
+        if (SwiftJson.Has(e, "pair", out var p) && (pair = SwiftJson.Uuid(p)) is null) return null;
+        return new PinDef(id, letter, home, title) { Name = name, Listed = listed, Folder = folder, Pair = pair };
     }
 }

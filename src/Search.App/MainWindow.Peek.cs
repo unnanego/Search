@@ -6,8 +6,8 @@ using Search.Engine;
 namespace Search.App;
 
 // A peek at a link, Arc's way (Peek.swift): Shift+click opens its page in a panel over the one you're reading, which
-// stays where it was underneath. Esc, a click beside the panel or its cross puts it away; "Open as tab" keeps it, as a
-// tab beside this one, loaded as it is.
+// stays where it was underneath. Esc, a click beside the panel or its cross puts it away; "Open as tab" or Ctrl+O keeps
+// it, as a tab beside this one, loaded as it is.
 public sealed partial class MainWindow
 {
     private Tab? _peek;

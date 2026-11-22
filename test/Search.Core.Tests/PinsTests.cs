@@ -56,6 +56,19 @@ public class PinsTests
     }
 
     [Fact]
+    public void KeepsTheSplitAPinWasPinnedIn()
+    {
+        var pair = Guid.NewGuid();
+        var def = new PinDef(Guid.Parse(Hub), "G", "g", "G") { Listed = true, Pair = pair };
+        var json = Pins.Encode(new Dictionary<Guid, IReadOnlyList<PinDef>> { [Guid.Parse(Space)] = [def] }, []);
+        Assert.Contains($"\"pair\":\"{SwiftJson.Uuid(pair)}\"", Encoding.UTF8.GetString(json));
+        Assert.Equal(def, Pins.Decode(json)!.Value.BySpace[Guid.Parse(Space)][0]);
+        // Through a window's row and back: the pair is carried, not dropped.
+        var (row, _) = Pins.Reconcile([], [def], new HashSet<Guid>());
+        Assert.Equal(pair, Pins.Defs(row).Defs[0].Pair);
+    }
+
+    [Fact]
     public void WhatIsWrittenReadsBack()
     {
         var bytes = Encoding.UTF8.GetBytes(MacFile);

@@ -99,11 +99,30 @@ public sealed partial class MainWindow
 
     private async Task RemoveSpace(Space space)
     {
-        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Remove {space.Name}?", Content = "Its tabs close and its session is forgotten. Bookmarks and history stay.", PrimaryButtonText = "Remove", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        if (space.Id == _space) GoToSpace(_spaces.Home(_spaces.ProfileOf(space.Id)));
-        if (_aside.Remove(space.Id, out var gone)) foreach (var tab in gone.Tabs) { _pages.Parked.Remove(tab); _pages.Sleep(tab); }
-        _spaces.Remove(space.Id);
+        // Signed in with the others, it has no cookies of its own to erase.
+        var detail = _spaces.OwnsStore(space) ? "Its tabs close, and its cookies and sign-ins are erased from this PC. History and bookmarks stay." : "Its tabs and pins close. Your sign-ins, history and bookmarks stay.";
+        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Remove {space.Name}?", Content = detail, PrimaryButtonText = "Remove", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary) DeleteSpace(space.Id);
+    }
+
+    /// Any space of the profile, its home included, while the profile keeps another: every window showing it moves
+    /// off it first (to the next one if it was the home), then it goes with its pins.
+    private static void DeleteSpace(Guid id)
+    {
+        if (!App.Shared.Spaces.CanRemove(id)) return;
+        foreach (var window in App.Windows.ToList()) window.LeaveSpace(id);
+        if (App.Shared.Spaces.Remove(id)) App.Shared.Pins.Forget(id, App.Shared.Folders);
+    }
+
+    /// Off a space about to be deleted: to the next one in the order if it was the home, else to the home; its row set
+    /// aside here closed.
+    private void LeaveSpace(Guid id)
+    {
+        if (_retired) return;
+        var profile = _spaces.ProfileOf(id);
+        var home = _spaces.Home(profile);
+        if (_space == id && _spaces.Of(profile).FirstOrDefault(s => s.Id != id) is { } next) GoToSpace(id == home ? next.Id : home);
+        if (_aside.Remove(id, out var gone)) foreach (var tab in gone.Tabs) { _pages.Parked.Remove(tab); _pages.Sleep(tab); }
     }
 
     /// The row of space buttons, and the window washed in the space's colour or gradient.
@@ -138,10 +157,18 @@ public sealed partial class MainWindow
                 colours.Items.Add(item);
             }
             menu.Items.Add(colours);
-            if (!space.IsFirst)
+            if (_spaces.CanRemove(id))
             {
                 var remove = new MenuFlyoutItem { Text = "Remove…" };
                 remove.Click += (_, _) => _ = RemoveSpace(space);
+                menu.Items.Add(remove);
+            }
+            else if (Profile != Search.Core.Profile.PersonalId && _spaces.Of(Profile).Count == 1)
+            {
+                // A profile's last space goes with the profile.
+                var profile = App.Shared.Profiles.Get(Profile);
+                var remove = new MenuFlyoutItem { Text = "Delete Profile…" };
+                remove.Click += (_, _) => _ = RemoveProfile(profile.Id, $"“{space.Name}” is its last space. The profile's windows close, its spaces go with their tabs and pins, and its cookies, sign-ins, history and bookmarks are erased from this PC.");
                 menu.Items.Add(remove);
             }
             button.ContextFlyout = menu;

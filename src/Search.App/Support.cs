@@ -38,6 +38,40 @@ public sealed class GroupRow(TabGroup group) : Observable
     public void Counted(int count) { if (_count == count) return; _count = count; Changed(nameof(Count)); }
 }
 
+public enum PinLineKind { Folder, Pin, Post }
+
+/// One line of the pinned rows (PinFolderViews.swift): a folder's heading, a pinned row, or a live folder's post, set
+/// in by how deep it is.
+public sealed class PinLine(PinLineKind kind, Guid id) : Observable
+{
+    private PinFolder? _folder;
+    private int _depth;
+    private string _tip = "";
+    public PinLineKind Kind { get; } = kind;
+    public Guid Id { get; } = id;
+    public Tab? Tab { get; set; }
+    public FeedItem? Post { get; set; }
+    /// For a post, the live folder it's in.
+    public Guid? PostFolder { get; set; }
+    public PinFolder? Folder { get => _folder; set { if (Set(ref _folder, value)) { Changed(nameof(Title)); Changed(nameof(Glyph)); } } }
+    public int Depth { get => _depth; set { if (Set(ref _depth, value)) Changed(nameof(Indent)); } }
+    public string Tip { get => _tip; set => Set(ref _tip, value); }
+    public Thickness Indent => new(_depth * 14, 0, 0, 0);
+    public string Title => Kind switch { PinLineKind.Folder => _folder?.Name ?? "", PinLineKind.Post => Post?.Title ?? "", _ => Tab?.Shown ?? "" };
+    /// A folder wears its fold mark, a live folder the feed's waves whether open or folded, a post a page.
+    public string Glyph => Kind switch { PinLineKind.Folder when _folder?.IsLive == true => "", PinLineKind.Folder => _folder?.Collapsed == true ? "" : "", _ => "" };
+}
+
+/// Which template draws a line of the pinned rows.
+public sealed partial class PinLineTemplates : DataTemplateSelector
+{
+    public DataTemplate? Folder { get; set; }
+    public DataTemplate? Pin { get; set; }
+    public DataTemplate? Post { get; set; }
+    protected override DataTemplate? SelectTemplateCore(object item) => item is PinLine { Kind: var kind } ? kind switch { PinLineKind.Folder => Folder, PinLineKind.Post => Post, _ => Pin } : Pin;
+    protected override DataTemplate? SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
+}
+
 /// Which template draws a row of the column: a tab, or a group's heading.
 public sealed partial class RowTemplates : DataTemplateSelector
 {
@@ -55,15 +89,25 @@ public sealed class RowMirror
 {
     private readonly Browser _browser;
     private readonly Dictionary<Guid, GroupRow> _headings = new();
+    private readonly Dictionary<Guid, PinLine> _lines = new();
+    private readonly Func<bool> _rows, _foldersOn;
+    private readonly Func<IReadOnlyList<PinFolder>> _folders;
+    private readonly Func<PinFolder, string> _tip;
     private bool _applying;
 
     public ObservableCollection<object> Items { get; } = new();
     public ObservableCollection<Tab> Pins { get; } = new();
     public ObservableCollection<Tab> Flat { get; } = new();
+    /// The pinned rows under the squares, in their folders (while Pinned rows and Folders in pinned rows are on).
+    public ObservableCollection<PinLine> PinRows { get; } = new();
 
-    public RowMirror(Browser browser)
+    public RowMirror(Browser browser, Func<bool>? rows = null, Func<bool>? foldersOn = null, Func<IReadOnlyList<PinFolder>>? folders = null, Func<PinFolder, string>? tip = null)
     {
         _browser = browser;
+        _rows = rows ?? (() => false);
+        _foldersOn = foldersOn ?? (() => false);
+        _folders = folders ?? (() => Array.Empty<PinFolder>());
+        _tip = tip ?? (_ => "");
         Sync();
         browser.Tabs.CollectionChanged += (_, _) => { if (!_applying) Sync(); };
         browser.RowShapeChanged += () => { if (!_applying) Sync(); };
@@ -87,9 +131,37 @@ public sealed class RowMirror
         }
         foreach (var gone in _headings.Keys.Where(id => !groups.ContainsKey(id)).ToList()) _headings.Remove(gone);
         Follow(Items, rows);
-        Follow(Pins, all.Where(t => t.Pinned).ToList());
+        var pins = all.Where(t => t.Pinned).ToList();
+        var showsRows = _rows();
+        Follow(Pins, pins.Where(t => !showsRows || !t.Listed).ToList());
+        Follow(PinRows, Lines(showsRows ? pins.Where(t => t.Listed).ToList() : new List<Tab>()));
         Follow(Flat, all);
     }
+
+    /// The pinned rows as lines: in their folders when those are on (the tab in front drawn even in a folded one),
+    /// else one after another.
+    private List<PinLine> Lines(List<Tab> rows)
+    {
+        var want = new List<PinLine>();
+        PinLine Line(PinLineKind kind, Guid id, int depth) { if (!_lines.TryGetValue(id, out var line) || line.Kind != kind) _lines[id] = line = new PinLine(kind, id); line.Depth = depth; want.Add(line); return line; }
+        if (!_foldersOn()) { foreach (var tab in rows) Line(PinLineKind.Pin, tab.Id, 0).Tab = tab; }
+        else
+        {
+            var byId = rows.ToDictionary(t => t.Id);
+            foreach (var line in PinTree.Lines(rows.Select(t => (t.Id, t.Folder)).ToList(), _folders(), _browser.Selected?.Id))
+                switch (line)
+                {
+                    case PinTree.FolderLine f: var heading = Line(PinLineKind.Folder, f.Folder.Id, f.Depth); heading.Folder = f.Folder; heading.Tip = _tip(f.Folder); break;
+                    case PinTree.PinLine p when byId.TryGetValue(p.Id, out var tab): Line(PinLineKind.Pin, p.Id, p.Depth).Tab = tab; break;
+                    case PinTree.ItemLine i: var post = Line(PinLineKind.Post, i.Item.Id, i.Depth); post.Post = i.Item; post.PostFolder = i.Folder; post.Tip = i.Item.Link; break;
+                }
+        }
+        foreach (var gone in _lines.Keys.Where(id => want.All(l => l.Id != id)).ToList()) _lines.Remove(gone);
+        return want;
+    }
+
+    /// The line a tab is drawn on among the pinned rows, if it is one.
+    public PinLine? LineOf(Tab tab) => PinRows.FirstOrDefault(l => l.Tab == tab);
 
     private static void Follow<T>(ObservableCollection<T> items, List<T> want)
     {

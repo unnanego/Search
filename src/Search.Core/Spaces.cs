@@ -96,6 +96,7 @@ public sealed class Spaces : Observable
 
     private readonly string _fileName;
     private readonly Func<Guid, Guid?>? _homes;
+    private readonly Action<Guid, Guid>? _rehome;
     /// The list as the file has it, for telling whether it carries the user's order.
     private List<Space> _saved = [];
     private IReadOnlyList<Space> _all = [Space.First()];
@@ -103,19 +104,21 @@ public sealed class Spaces : Observable
     private Guid _current = Space.FirstId;
 
     /// `settings`: where the Mac's settings notes live (Bookmarks.SharedSettings, memory only, unless the app hands
-    /// over its own). `homes`: each profile's home space (Profile.home), for a profile other than Personal; without
-    /// it, or for a profile it doesn't know, the profile's first space in the file is its home.
-    public Spaces(string file = "spaces.json", IDictionary<string, string>? settings = null, Func<Guid, Guid?>? homes = null)
+    /// over its own). `homes`: each profile's home space (Profile.home, Profiles.HomeOf); without it, or for a profile
+    /// it doesn't know, Personal's home is the first space and another's is its first space in the file. `rehome`: a
+    /// profile's home deleted, the space that takes its place (Profiles.Rehome); without it, no home can be deleted.
+    public Spaces(string file = "spaces.json", IDictionary<string, string>? settings = null, Func<Guid, Guid?>? homes = null, Action<Guid, Guid>? rehome = null)
     {
         _fileName = file;
         Settings = settings ?? Bookmarks.SharedSettings;
         _homes = homes;
+        _rehome = rehome;
         Load();
     }
 
     internal IDictionary<string, string> Settings { get; }
 
-    /// Every space of every profile, in the order the user arranged them; the first space always among them.
+    /// Every space of every profile, in the order the user arranged them; the first space among them unless deleted.
     public IReadOnlyList<Space> All => _all;
     /// Every space by its id, as the file last had them.
     public IReadOnlyDictionary<Guid, Space> Known => _known;
@@ -133,11 +136,19 @@ public sealed class Spaces : Observable
     /// The profile a space is in: Personal for one that isn't known.
     public Guid ProfileOf(Guid id) => Find(id)?.ProfileId ?? PersonalProfile;
 
-    /// The profile's first space: the one a window shows with spaces off, and the one that can't be deleted. Known
-    /// by its id, not its place, because the spaces can be reordered.
+    /// The profile's first space: the one a window shows with spaces off. Known by its id, not its place, because the
+    /// spaces can be reordered; one gone from the list falls to the first there is.
     public Guid Home(Guid profile) => HomeIn(profile, _all.Where(s => s.ProfileId == profile));
 
-    private Guid HomeIn(Guid profile, IEnumerable<Space> block) => profile == PersonalProfile ? Space.FirstId : _homes?.Invoke(profile) ?? block.FirstOrDefault()?.Id ?? Space.FirstId;
+    private Guid HomeIn(Guid profile, IEnumerable<Space> block)
+    {
+        var home = SavedHome(profile);
+        var first = block.FirstOrDefault()?.Id;
+        return home is { } h && block.Any(s => s.Id == h) ? h : first ?? home ?? Space.FirstId;
+    }
+
+    /// A profile's home as profiles.json has it: for Personal the first space unless that was deleted (see Remove).
+    private Guid? SavedHome(Guid profile) => _homes?.Invoke(profile) ?? (profile == PersonalProfile ? Space.FirstId : null);
 
     // On or off, and which is in front.
 
@@ -197,8 +208,9 @@ public sealed class Spaces : Observable
     // Stores.
 
     /// Whether a space is signed out of the others, with a store of its own: any but the first space of a profile and
-    /// the ones made signed in with it.
-    public bool OwnsStore(Space space) => !(space.IsFirst || space.SharesSignIns == true || (space.ProfileId != PersonalProfile && Home(space.ProfileId) == space.Id));
+    /// the ones made signed in with it. A space that became the home when the first was deleted keeps the store it
+    /// had: one of its own is marked so (SharesSignIns false).
+    public bool OwnsStore(Space space) => !(space.IsFirst || space.SharesSignIns == true || (space.ProfileId != PersonalProfile && Home(space.ProfileId) == space.Id && space.SharesSignIns is null));
     public bool OwnsStore(Guid id) => Find(id) is { } space ? OwnsStore(space) : id != Space.FirstId;
 
     /// The WebView2 profile (ProfileName) a space's tabs use. Null for the default one: Personal's first space and
@@ -293,16 +305,33 @@ public sealed class Spaces : Observable
         SetStrength(id, strength ?? SpaceStrength.Subtle);
     }
 
-    /// A space and its tabs gone: its session file erased, and, unless it was signed in with the others, its store
-    /// noted for erasing (see Erasing) and its own history removed. The first space, and each profile's home, stay:
-    /// they are where everything was before there were spaces. The window closes its tabs, and Pins forgets its pins.
+    /// Whether a space can be deleted: any, as long as its profile keeps one (its last goes with the profile).
+    public bool CanRemove(Guid id) => Find(id) is { } space && Of(space.ProfileId).Count > 1 && (_rehome is not null || id != Home(space.ProfileId));
+
+    /// A space and its tabs gone, any of its profile's, the home included, as in Arc: the next one in the order becomes
+    /// the home, signed in where it was (one from before the sign-in choice is marked as having its own store, so it
+    /// keeps it). Its session file is erased, but the first space's, the one there was before spaces, is emptied.
+    /// Unless it was signed in with the others, its store is noted for erasing (see Erasing) and its own history
+    /// removed. The window moves off it and closes its tabs first, and Pins forgets its pins.
     public bool Remove(Guid id)
     {
-        if (id == Space.FirstId || Find(id) is not { } space || id == Home(space.ProfileId)) return false;
-        var owned = space.SharesSignIns != true;
-        if (_current == id) Remember(Home(space.ProfileId), primary: true);
-        Write(Of(space.ProfileId).Where(s => s.Id != id).ToList(), space.ProfileId);
-        Session.Erase(id);
+        if (!CanRemove(id)) return false;
+        var space = _known[id];
+        var profile = space.ProfileId;
+        // Asked before the list changes: whether its store is its own or the profile's, which stays.
+        var owned = OwnsStore(space);
+        var home = Home(profile);
+        var mine = Of(profile).ToList();
+        var next = mine.First(s => s.Id != id).Id;
+        if (_current == id) Remember(id == home ? next : home, primary: true);
+        if (id == home)
+        {
+            var at = mine.FindIndex(s => s.Id == next);
+            if (mine[at].SharesSignIns is null) mine[at] = mine[at] with { SharesSignIns = false };
+            _rehome?.Invoke(profile, next);
+        }
+        Write(mine.Where(s => s.Id != id).ToList(), profile);
+        if (id == Space.FirstId) _ = Session.Write(Session.Shape.Empty, now: true, id); else Session.Erase(id);
         if (owned) EraseStore(id);
         return true;
     }
@@ -313,7 +342,7 @@ public sealed class Spaces : Observable
     {
         if (profile == PersonalProfile) return [];
         var gone = _all.Where(s => s.ProfileId == profile).ToList();
-        if (gone.Any(s => s.Id == _current)) Current = Space.FirstId;
+        if (gone.Any(s => s.Id == _current)) Current = Home(PersonalProfile);
         Write(_all.Where(s => s.ProfileId != profile).ToList());
         foreach (var space in gone)
         {
@@ -381,10 +410,12 @@ public sealed class Spaces : Observable
     }
 
     /// The list as read: the first space once, in Personal, wherever it was put; added at the front if missing, so
-    /// that home stays reachable. Home first, unless the file carries the user's order.
+    /// that home stays reachable, unless it was deleted and Personal's home is another space of the list now. Home
+    /// first, unless the file carries the user's order.
     private void Arrange()
     {
         List<Space> spaces;
+        var personal = SavedHome(PersonalProfile);
         if (_saved.Count == 0) spaces = [Space.First()];
         else
         {
@@ -397,7 +428,7 @@ public sealed class Spaces : Observable
                 foundHome = true;
                 spaces.Add(space with { Profile = null });
             }
-            if (!foundHome) spaces.Insert(0, Space.First());
+            if (!foundHome && (personal == Space.FirstId || !spaces.Any(s => s.Id == personal && s.ProfileId == PersonalProfile))) spaces.Insert(0, Space.First());
             if (!KeepsOrder(_saved)) spaces = [.. spaces.Where(s => s.IsFirst), .. spaces.Where(s => !s.IsFirst)];
         }
         _all = spaces;

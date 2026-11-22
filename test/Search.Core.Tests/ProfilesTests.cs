@@ -2,7 +2,7 @@ using Search.Core;
 
 namespace Search.Core.Tests;
 
-/// Profiles (Profiles.cs, the Mac's Profiles.swift model): Personal first and for good, the Mac's profiles.json, a new
+/// Profiles (Profiles.cs, the Mac's Profiles.swift model): Personal for good where the file has it, profiles.json, a new
 /// profile with its home space, and a deleted one taking every file of its own with it while Personal's stay put.
 public class ProfilesTests
 {
@@ -28,16 +28,38 @@ public class ProfilesTests
     }
 
     [Fact]
-    public void AMacsFileReadsWithPersonalFirstAndAtHome()
+    public void AMacsFileReadsInItsOwnOrderPersonalWithTheHomeItHas()
     {
         var club = Guid.NewGuid();
         var home = Guid.NewGuid();
-        var (profiles, _) = Fresh($$"""[{"id":"{{SwiftJson.Uuid(club)}}","name":"Club","home":"{{SwiftJson.Uuid(home)}}"},{"id":"00000000-0000-0000-0000-0000000000A1","name":"Me","home":"{{SwiftJson.Uuid(Guid.NewGuid())}}"}]""");
-        Assert.Equal(["Me", "Club"], profiles.List.Select(p => p.Name));
-        Assert.Equal(Space.FirstId, profiles.List[0].Home);
+        var mine = Guid.NewGuid();
+        var (profiles, _) = Fresh($$"""[{"id":"{{SwiftJson.Uuid(club)}}","name":"Club","home":"{{SwiftJson.Uuid(home)}}"},{"id":"00000000-0000-0000-0000-0000000000A1","name":"Me","home":"{{SwiftJson.Uuid(mine)}}"}]""");
+        // Personal where it was moved to, with the home its first space's deletion left it.
+        Assert.Equal(["Club", "Me"], profiles.List.Select(p => p.Name));
+        Assert.Equal(mine, profiles.HomeOf(Profile.PersonalId));
         Assert.Equal(home, profiles.HomeOf(club));
         Assert.Null(profiles.HomeOf(Guid.NewGuid()));
+        Assert.Equal("Me", profiles.Get(Guid.NewGuid()).Name);
         Assert.True(profiles.Several);
+        // Twice: the first one counts, where it stands. A file without it (only ever written by hand): first, at home.
+        var (twice, _) = Fresh($$"""[{"id":"{{SwiftJson.Uuid(club)}}","name":"Club","home":"{{SwiftJson.Uuid(home)}}"},{"id":"00000000-0000-0000-0000-0000000000A1","name":"Me","home":"{{SwiftJson.Uuid(mine)}}"},{"id":"00000000-0000-0000-0000-0000000000A1","name":"Again","home":"{{SwiftJson.Uuid(home)}}"}]""");
+        Assert.Equal(["Club", "Me"], twice.List.Select(p => p.Name));
+        var (without, _) = Fresh($$"""[{"id":"{{SwiftJson.Uuid(club)}}","name":"Club","home":"{{SwiftJson.Uuid(home)}}"}]""");
+        Assert.Equal([Profile.Personal, new Profile(club, "Club", home)], without.List);
+    }
+
+    [Fact]
+    public async Task PersonalRehomedIsAFileAndBackAtTheFirstSpaceIsNone()
+    {
+        var (profiles, file) = Fresh();
+        var work = Guid.NewGuid();
+        profiles.Rehome(Profile.PersonalId, work);
+        await Disk.Flush();
+        Assert.Equal($$"""[{"id":"00000000-0000-0000-0000-0000000000A1","name":"Personal","home":"{{SwiftJson.Uuid(work)}}"}]""", File.ReadAllText(Store.File(file)));
+        Assert.Equal(work, new Profiles(file).HomeOf(Profile.PersonalId));
+        profiles.Rehome(Profile.PersonalId, Space.FirstId);
+        await Disk.Flush();
+        Assert.False(File.Exists(Store.File(file)));
     }
 
     [Fact]

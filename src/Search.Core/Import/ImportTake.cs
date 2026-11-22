@@ -27,13 +27,17 @@ public sealed record TabsTaken(int Pins, int Tabs, int Groups, IReadOnlyList<Uri
 /// Where an import lands: the window's profile and the space on screen, the stores it changes, and the two pinned-row
 /// settings that decide how a pinned list comes in. `ProfileFor`: the Search profile for one of Arc's profile folders
 /// ("Profile 1"); every one is this window's profile unless told. `Asleep`: puts pages at the end of a space's row and
-/// says how many tabs and new groups that made; the space's session file unless told (IntoSession).
+/// says how many tabs and new groups that made; the space's session file unless told (IntoSession). `Untouched`:
+/// whether a space's row has no tab but a blank one, wherever the row is kept; the session file unless told
+/// (BlankSession). `Leaving`: a space about to be deleted, for the windows showing it to move off it first.
 public sealed record ImportTarget(Spaces Spaces, Pins Pins, PinFolders Folders, Guid Profile, Guid Space)
 {
     public bool ListsPins { get; init; }
     public bool PinFolders { get; init; }
     public Func<string, Guid?>? ProfileFor { get; init; }
     public Func<Guid, IReadOnlyList<AsleepPage>, (int Tabs, int Groups)> Asleep { get; init; } = ImportTake.IntoSession;
+    public Func<Guid, bool> Untouched { get; init; } = ImportTake.BlankSession;
+    public Action<Guid>? Leaving { get; init; }
     /// Passed on with Pins.Changed, so the window that made the change knows it was its own.
     public object? From { get; init; }
 }
@@ -68,7 +72,8 @@ public static class ImportTake
     /// Arc's sidebar, or Zen's spaces read into its shape. Each of its spaces becomes a space here (the one of the same
     /// name if there is one), its pinned list that space's, folders as they fit; the favourites (Arc) or Essentials
     /// (Zen) become the pins of every space of their profile. A lone space, with spaces off, comes into the space on
-    /// screen; more than one turns spaces on.
+    /// screen, giving the untouched first space its name and look; more than one turns spaces on. Spaces that come in
+    /// for the window's profile take the place of its home when nothing was ever put in it, as in Arc.
     ///
     /// The pinned list is split the way Arc holds it. With pinned rows on, a page it keeps loose is a row, and one it
     /// filed in a folder stays a tab in a group of that folder's name, because a pin is never in a group and the
@@ -79,6 +84,8 @@ public static class ImportTake
         int made = 0, pins = 0, added = 0;
         var brought = new List<Uri>();
         Guid ProfileOf(ArcSpace arc) => arc.Profile == "Default" ? target.Profile : target.ProfileFor?.Invoke(arc.Profile) ?? target.Profile;
+        // This profile's home as it was before: replaced by the spaces that come in, below, if nothing was ever put in it.
+        var home = target.Spaces.Home(target.Profile);
         var targets = new List<(Guid Id, ArcSpace? Space)>();
         if (sidebar.Spaces.Count > 1 || (target.Spaces.UsesSpaces && sidebar.Spaces.Count > 0))
         {
@@ -96,7 +103,14 @@ public static class ImportTake
         }
         // A lone space of another profile: that profile's first space.
         else if (sidebar.Spaces.FirstOrDefault() is { } lone && ProfileOf(lone) is var other && other != target.Profile) targets.Add((target.Spaces.Home(other), lone));
-        else targets.Add((target.Space, sidebar.Spaces.FirstOrDefault()));
+        else
+        {
+            targets.Add((target.Space, sidebar.Spaces.FirstOrDefault()));
+            // The one space there is takes the Arc space's name and look while it still has the ones it started with:
+            // turned on later, Spaces shows the space you brought, not a "Personal" beside it.
+            if (sidebar.Spaces.FirstOrDefault() is { } arc && target.Space == Space.FirstId && target.Spaces.Find(Space.FirstId) is { Icon: null, Colour: 0, Gradient: null } first && first.Name == Space.First().Name)
+                target.Spaces.Write([.. target.Spaces.Of(first.ProfileId).Select(s => s.Id == first.Id ? s with { Name = arc.Name, Icon = arc.Symbol, Colour = arc.Colour, Gradient = arc.Gradient is { Usable: true } g ? g : null } : s)], first.ProfileId);
+        }
 
         var folded = target.ListsPins && target.PinFolders;
         foreach (var (id, arc) in targets)
@@ -133,8 +147,22 @@ public static class ImportTake
             var asleep = folded ? [] : rows.Count == 0 ? pinned : pinned.Where(p => p.Folder is not null).ToList();
             if (asleep.Count > 0) added += target.Asleep(id, asleep.Select(p => new AsleepPage(p.Item.Url, p.Item.Title, p.Folder)).ToList()).Tabs;
         }
+        // The home there was before, untouched (no pins and no tab but an empty one), is replaced by the spaces that
+        // came, as in Arc, rather than left beside them as a "Personal" nobody uses. Deleted as Remove deletes any.
+        if (targets.Any(t => t.Id != home && target.Spaces.ProfileOf(t.Id) == target.Profile) && targets.All(t => t.Id != home) && Untouched(target, home)
+            && target.Spaces.CanRemove(home))
+        {
+            target.Leaving?.Invoke(home);
+            if (target.Spaces.Remove(home)) target.Pins.Forget(home, target.Folders);
+        }
         return new(made, pins, added, brought);
     }
+
+    /// A space nothing was put in: no pins, no folders of them, and no tab but an empty one.
+    private static bool Untouched(ImportTarget target, Guid space) => target.Pins.Defs(space).Count == 0 && target.Folders.Folders(space).Count == 0 && target.Untouched(space);
+
+    /// A space's session file with no tab but an empty one, for a space no window has up.
+    public static bool BlankSession(Guid space) => Session.Read(space).Tabs.All(t => t.Pin is null && t.Url is "" or "about:blank");
 
     /// Another browser's open tabs, from the snapshot read when the panel counted them, into the space on screen: its
     /// pinned tabs as pins, the rest asleep at the end of the row, a grouped tab in the group of that name, made if

@@ -23,7 +23,7 @@ public sealed partial class MainWindow
 
     private static PinnedTab Facts(Tab tab) => new(tab.Id)
     {
-        Pin = tab.Pinned ? tab.Letter ?? Pins.Monogram(tab.Url, tab.Title) : null, PinId = tab.PinId, Home = tab.Home?.AbsoluteUri, Url = tab.Url?.AbsoluteUri, Title = tab.Title, Name = tab.Name, Private = tab.Private
+        Pin = tab.Pinned ? tab.Letter ?? Pins.Monogram(tab.Url, tab.Title) : null, PinId = tab.PinId, Listed = tab.Pinned && tab.Listed, Folder = tab.Pinned && tab.Listed ? tab.Folder : null, Pair = tab.Pinned ? tab.PinPair : null, Home = tab.Home?.AbsoluteUri, Url = tab.Url?.AbsoluteUri, Title = tab.Title, Name = tab.Name, Private = tab.Private
     };
 
     /// The row changed: its pins, as they now are, told to the other windows (nothing is said when they're the same).
@@ -41,7 +41,7 @@ public sealed partial class MainWindow
     {
         if (_retired) return;
         var tabs = _browser.Ordinary.ToList();
-        var (row, gone) = Pins.Reconcile(tabs.Select(Facts).ToList(), Pinned.Defs(_space), new HashSet<Guid>());
+        var (row, gone) = Pins.Reconcile(tabs.Select(Facts).ToList(), Pinned.Defs(_space), new HashSet<Guid>(), _prefs.ShowsPinFolders ? App.Shared.Folders.Folders(_space) : null);
         _following = true;
         try
         {
@@ -51,7 +51,7 @@ public sealed partial class MainWindow
                 var facts = row[at];
                 var tab = facts.Fresh ? new Tab { Title = facts.Title, Store = _browser.Store } : tabs.FirstOrDefault(t => t.Id == facts.Id);
                 if (tab is null) continue;
-                if (facts.IsPin) { tab.PinId = facts.PinId; tab.Letter = facts.Pin; tab.Name = facts.Name; tab.Home = Uri.TryCreate(facts.Home, UriKind.Absolute, out var home) ? home : null; }
+                if (facts.IsPin) { tab.PinId = facts.PinId; tab.Letter = facts.Pin; tab.Name = facts.Name; tab.Home = Uri.TryCreate(facts.Home, UriKind.Absolute, out var home) ? home : null; tab.Listed = facts.Listed; tab.Folder = facts.Folder; tab.PinPair = facts.Pair; }
                 if (facts.Fresh) { if (tab.Home is { } page) tab.Url = page; _browser.Insert(tab, Math.Min(at, _browser.Tabs.Count)); }
                 else if (_browser.Tabs.IndexOf(tab) is var from and >= 0 && from != at && at < _browser.Tabs.Count) _browser.Move(tab, at);
             }

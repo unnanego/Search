@@ -15,7 +15,7 @@ public sealed class Shared(Prefs prefs)
     public SiteStyles Styles { get; } = new();
     public Downloads Downloads { get; } = new();
     public Vault Vault { get; } = new();
-    public Spaces Spaces => _spaces ??= new Spaces(settings: App.Notes, homes: Profiles.HomeOf);
+    public Spaces Spaces => _spaces ??= new Spaces(settings: App.Notes, homes: Profiles.HomeOf, rehome: Profiles.Rehome);
     public SpaceRoutes Routes => _routes ??= new SpaceRoutes(Spaces);
     public ExtensionHost Extensions { get; } = new(App.Notes);
     /// The pins, the same in every window; before there is a pins.json, the oldest window's session files hold them.

@@ -28,7 +28,7 @@ public readonly record struct CurtainDress(string Hiding, string? Style);
 public static class Curtain
 {
     /// Once, before any tab is shown: Pages.AddScript(Curtain.DocumentStartScript). The picker, asleep until asked.
-    public static string DocumentStartScript => Scripts.Read("curtain.js");
+    public static string DocumentStartScript => Scripts.Read("sheet.js") + "\n" + Scripts.Read("curtain.js");
 
     /// What's armed in each web view, so the same sheets aren't sent again for every link followed on a site. Kept by
     /// the XAML control, whose identity is the view's own; a tab woken from sleep has a new one, with nothing armed.
@@ -124,7 +124,7 @@ public static class Curtain
         return host.StartsWith("www.", StringComparison.Ordinal) ? host[4..] : host;
     }
 
-    private static string Dressing(string? host, string? hiding, string? style) => $"({Scripts.Read("dress.js")})({Scripts.Literal(host)}, {Scripts.Literal(hiding)}, {Scripts.Literal(style)});";
+    private static string Dressing(string? host, string? hiding, string? style) => $"{Scripts.Read("sheet.js")}\n({Scripts.Read("dress.js")})({Scripts.Literal(host)}, {Scripts.Literal(hiding)}, {Scripts.Literal(style)});";
 
     private static string? Text(JsonElement body, string name) => body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 

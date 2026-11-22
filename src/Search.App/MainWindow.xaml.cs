@@ -37,8 +37,8 @@ public sealed partial class MainWindow : Window
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         SystemBackdrop = new MicaBackdrop();
         Place(record, from);
-        _row = new RowMirror(_browser);
-        _pages = new Pages(_browser, Stage) { Theme = _prefs.Theme };
+        _row = MakeRow();
+        _pages = new Pages(_browser, Stage) { Theme = _prefs.Theme, TriesHttpsFirst = () => _prefs.TriesHttpsFirst };
         _ = _pages.SetShield(_prefs.Shield, _prefs.ShieldPaused);
         Row.ItemsSource = _row.Items;
         Strip.ItemsSource = _row.Flat;
@@ -64,12 +64,15 @@ public sealed partial class MainWindow : Window
         WirePasswords();
         WireBookmarks();
         WireCurtain();
+        WireFolders();
+        WireCapture();
         WireSplit();
         WireSwitcher();
         WirePeek();
         WireFold();
         WireIdle();
         WireRow();
+        WireTitleBar();
         WireAgent();
         WireExtensions();
         Lay();
@@ -109,11 +112,15 @@ public sealed partial class MainWindow : Window
     private readonly List<LittleWindow> _littles = new();
 
     /// A link from another app (Links.swift): a small window of its own (Little.swift), or a tab in front.
-    public void FromElsewhere(Uri link)
+    public void FromElsewhere(Uri link) => Land(link, _prefs.LittleLinks);
+
+    /// A page asked for from outside the window (another app, the launcher): to its space's route, to a small window
+    /// over the app you're in, or to a tab here.
+    internal void Land(Uri link, bool small)
     {
         // A route sends the link to its space, in the window, with that space's sign-ins.
         if (_spaces.UsesSpaces && Route(link)) { OpenHere(link); return; }
-        if (_prefs.LittleLinks && link.Scheme is "http" or "https")
+        if (small && link.Scheme is "http" or "https")
         {
             var little = new LittleWindow(this, link, _prefs);
             _littles.Add(little);
@@ -146,11 +153,15 @@ public sealed partial class MainWindow : Window
     {
         var tab = _browser.Selected;
         Row.SelectedItem = tab is { Pinned: false } ? tab : null;
-        PinGrid.SelectedItem = tab is { Pinned: true } ? tab : null;
+        PinGrid.SelectedItem = tab is { Pinned: true } && !(tab.Listed && _prefs.ShowsPinRows) ? tab : null;
+        // In a folded folder the tab in front is still drawn: the rows are worked out again.
+        if (_prefs.ShowsPinFolders) _row.Sync();
+        MarkPinRow();
         Strip.SelectedItem = tab;
         Title = Titled(tab);
         ShowAddressNow();
         CloseFind();
+        DispatcherQueue.TryEnqueue(RevealSelected);
         if (tab is null) { FocusField(); return; }
         _ = Front(tab);
     }
@@ -185,7 +196,7 @@ public sealed partial class MainWindow : Window
 
     private void OnNewTabClick(object sender, RoutedEventArgs e) => NewTab();
 
-    private void NewTab(bool @private = false) { _browser.Open(null, @private: @private); FocusField(); }
+    private void NewTab(bool @private = false) { _browser.Open(null, @private: @private); FocusField(); _launching = true; }
 
     /// Ctrl+Shift+T: the tab closed last, or the window, whichever went later.
     private void Reopen()
@@ -224,14 +235,17 @@ public sealed partial class MainWindow : Window
         Detach(Field);
         if (column) ColumnFieldSlot.Child = Field; else FieldHost.Children.Add(Field);
         FieldHost.Visibility = Visibility.Collapsed;
-        SetTitleBar(side ? TopBar : DragSpace);
+        LayTitleBar();
         LayExtensions();
         LayFold();
     }
 
-    private static void Detach(FrameworkElement element)
+    /// Before the window is loaded an element has no Parent to be found by, so the slots the field and the extensions'
+    /// buttons start in are asked too: launched with the tabs across the top, the field couldn't be moved out of the
+    /// column and the window never opened.
+    private void Detach(FrameworkElement element)
     {
-        switch (element.Parent ?? VisualTreeHelper.GetParent(element))
+        switch (element.Parent ?? VisualTreeHelper.GetParent(element) ?? new[] { ColumnFieldSlot, ColumnExtensionsSlot, TopExtensionsSlot }.FirstOrDefault(slot => slot.Child == element))
         {
             case Border border: border.Child = null; break;
             case Panel panel: panel.Children.Remove(element); break;

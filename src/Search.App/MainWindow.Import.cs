@@ -98,7 +98,7 @@ public sealed partial class MainWindow
             said.Add(found.Trouble != LoginTrouble.None && found.Logins.Count == 0 ? found.Advice ?? "Its passwords couldn't be read" : $"{kept} passwords" + (skipped > 0 ? $", {skipped} already here" : ""));
             if (found.AppBound > 0) said.Add($"{found.AppBound} more {name} keeps to itself: {found.Advice ?? "export them to a CSV file and bring that in"}");
         }
-        var target = new ImportTarget(_spaces, Pinned, App.Shared.Folders, Profile, _space) { Asleep = Asleep, From = null };
+        var target = new ImportTarget(_spaces, Pinned, App.Shared.Folders, Profile, _space) { Asleep = Asleep, Untouched = Untouched, Leaving = id => { foreach (var window in App.Windows.ToList()) window.LeaveSpace(id); }, From = null };
         if (what.HasFlag(Bringing.Tabs))
         {
             var taken = ImportTake.OpenTabs(await Task.Run(() => source.Sessions(profile)), target);
@@ -132,6 +132,13 @@ public sealed partial class MainWindow
         foreach (var page in pages) { var tab = new Tab { Url = page.Url, Title = page.Title, Store = _spaces.StoreName(space) }; aside.Tabs.Add(tab); _pages.Parked.Add(tab); }
         return (pages.Count, 0);
     }
+
+    /// Whether a space's row has no tab but a blank one (Browser.isUntouched): the row on screen, one set aside here,
+    /// or else its session file.
+    private bool Untouched(Guid space) =>
+        space == _space ? _browser.Tabs.All(Blank) : _aside.TryGetValue(space, out var aside) ? aside.Tabs.All(Blank) : ImportTake.BlankSession(space);
+
+    private static bool Blank(Tab tab) => !tab.Pinned && (tab.Url is null || tab.Url.AbsoluteUri == "about:blank");
 
     /// Another browser's passwords file, kept in the vault; the file itself stays yours to delete.
     private string TakePasswordFile(string file)

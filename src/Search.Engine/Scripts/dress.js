@@ -3,31 +3,17 @@
 // Curtain.cs with its arguments as soon as it's read: at document start for the next page (armed for one host, which
 // it checks, so a page of another site never wears this one's), or on the page up now (host null).
 //
-// `hiding` or `style` null leaves that sheet as it is; '' empties it. Text in a style element, never markup: nothing
-// in it can close the element and become something else.
+// `hiding` or `style` null leaves that sheet as it is; '' empties it. Each goes in through __searchSheet (sheet.js,
+// which Curtain.cs puts in front of this): an adopted sheet, so a site's Content-Security-Policy can't turn it away.
 ((host, hiding, style) => {
   if (window !== window.top) return;
   if (host !== null && location.hostname.toLowerCase().replace(/^www\./, '') !== host) return;
-  const veil = css => {
-    let sheet = document.getElementById('office-veil');
-    if (!sheet) {
-      if (!css) return;
-      sheet = document.createElement('style');
-      sheet.id = 'office-veil';
-      (document.head || document.documentElement).appendChild(sheet);
-    }
-    sheet.textContent = css;
-  };
-  // Last in the document once there is one, so a rule of yours wins over the site's own of the same weight without
-  // needing !important.
+  const veil = css => __searchSheet('office-veil', css);
+  // After the site's own sheets, so a rule of yours wins over one of the same weight without needing !important. An
+  // adopted sheet always is; the <style> element it falls back to is kept last in the document.
   const mine = css => {
-    let sheet = document.getElementById('office-style');
-    if (!sheet) {
-      if (!css) return;
-      sheet = document.createElement('style');
-      sheet.id = 'office-style';
-    }
-    sheet.textContent = css;
+    const sheet = __searchSheet('office-style', css);
+    if (!sheet) return;
     const last = () => document.documentElement.appendChild(sheet);
     last();
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', last, { once: true });

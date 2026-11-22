@@ -60,6 +60,24 @@ public sealed class Downloads : Observable
         return candidate;
     }
 
+    /// Whether a file can be made in `folder`, made first if it's missing (Browser.canWrite). Tried for real, with an
+    /// empty file taken away at once: a folder that is gone, read-only, on a drive no longer there or kept out of by
+    /// Controlled folder access can look writable to every other question, and WebView2 then fails the download as it
+    /// starts.
+    public static bool CanWrite(string? folder)
+    {
+        if (string.IsNullOrEmpty(folder)) return false;
+        var probe = System.IO.Path.Combine(folder, $".search-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(folder);
+            using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return false; }
+        finally { try { File.Delete(probe); } catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { } }
+    }
+
     /// Whether a download can be asked for again from the start: only a plain GET or HEAD. One a form sent (a POST, a
     /// body) would send the form again.
     public static bool Replayable(string? method, bool hasBody) => !hasBody && (method ?? "GET").ToUpperInvariant() is "GET" or "HEAD";

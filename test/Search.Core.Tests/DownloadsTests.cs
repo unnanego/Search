@@ -147,4 +147,33 @@ public class DownloadsTests
         Assert.False(Downloads.Replayable("POST", false));
         Assert.False(Downloads.Replayable("GET", true));
     }
+
+    /// A folder a download can't be written into is found out before WebView2 fails on it (#1291), and nothing is
+    /// left behind.
+    [Fact]
+    public void WhereADownloadCanGo()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"can-write-{Guid.NewGuid():N}");
+        try
+        {
+            var missing = Path.Combine(root, "open", "deeper");
+            Assert.True(Downloads.CanWrite(missing), "a missing folder is made");
+            Assert.Empty(Directory.EnumerateFileSystemEntries(missing));
+            var file = Path.Combine(root, "a file");
+            File.WriteAllText(file, "x");
+            Assert.False(Downloads.CanWrite(Path.Combine(file, "inside")), "a folder under a file can't be made");
+            Assert.False(Downloads.CanWrite(null));
+            Assert.False(Downloads.CanWrite(""));
+            if (!OperatingSystem.IsWindows()) return;
+            var locked = Path.Combine(root, "locked");
+            var info = Directory.CreateDirectory(locked);
+            var rules = info.GetAccessControl();
+            rules.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(System.Security.Principal.WindowsIdentity.GetCurrent().User!, System.Security.AccessControl.FileSystemRights.CreateFiles, System.Security.AccessControl.AccessControlType.Deny));
+            info.SetAccessControl(rules);
+            Assert.False(Downloads.CanWrite(locked), "a folder you may not make files in");
+            rules.RemoveAccessRule(new System.Security.AccessControl.FileSystemAccessRule(System.Security.Principal.WindowsIdentity.GetCurrent().User!, System.Security.AccessControl.FileSystemRights.CreateFiles, System.Security.AccessControl.AccessControlType.Deny));
+            info.SetAccessControl(rules);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

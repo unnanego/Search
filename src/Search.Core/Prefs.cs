@@ -10,11 +10,12 @@ public enum Theme { System, Light, Dark }
 public sealed class Prefs : Observable
 {
     private static readonly JsonSerializerOptions _json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) } };
-    private bool _tabsOnSide = true, _folded, _bench, _agents;
+    private bool _tabsOnSide = true, _folded, _bench, _agents, _launcher, _launcherLittle, _capture, _pinRows, _pinFolders, _findsOpenTabs;
+    private string? _launcherKey;
     private Theme _theme;
     private string _engine = "google", _customEngine = "";
     private double _columnWidth = 240;
-    private bool _shield = true, _savePasswords = true, _siteStyles, _littleLinks = true;
+    private bool _shield = true, _savePasswords = true, _siteStyles, _littleLinks = true, _triesHttpsFirst;
     private List<string> _shieldPaused = [];
 
     /// Tabs down the left (a new install's choice, as on the Mac) or across the top.
@@ -33,6 +34,8 @@ public sealed class Prefs : Observable
     public bool LittleLinks { get => _littleLinks; set { if (Set(ref _littleLinks, value)) Save(); } }
     /// The ad blocker, on unless turned off.
     public bool Shield { get => _shield; set { if (Set(ref _shield, value)) Save(); } }
+    /// Settings › Try HTTPS first: an http:// page tried over HTTPS before as asked (HttpsFirst). Off unless turned on.
+    public bool TriesHttpsFirst { get => _triesHttpsFirst; set { if (Set(ref _triesHttpsFirst, value)) Save(); } }
     /// Sites the ad blocker is off for: the ones it broke.
     public List<string> ShieldPaused { get => _shieldPaused; set { _shieldPaused = value ?? []; Changed(); } }
 
@@ -47,6 +50,29 @@ public sealed class Prefs : Observable
         Save();
     }
     private static string Site(string host) => host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..].ToLowerInvariant() : host.ToLowerInvariant();
+
+    /// Settings › Pinned rows (Prefs.swift's listsPins): Arc's tiers, the squares, then pins kept as rows under them,
+    /// then the tabs that come and go. Off unless asked for.
+    public bool PinRows { get => _pinRows; set { if (Set(ref _pinRows, value)) Save(); } }
+    /// Settings › Folders in pinned rows (pinFolders): folders among the pinned rows, live folders among them. Off
+    /// unless asked for; without Pinned rows it does nothing.
+    public bool PinFolders { get => _pinFolders; set { if (Set(ref _pinFolders, value)) Save(); } }
+    /// The pinned rows drawn as rows: asked for, and with the tabs down the side (across the top every pin is a square).
+    [JsonIgnore] public bool ShowsPinRows => _pinRows && _tabsOnSide;
+    /// The pinned rows drawn in their folders.
+    [JsonIgnore] public bool ShowsPinFolders => _pinFolders && ShowsPinRows;
+    /// Settings › Ctrl+T finds your open tabs (the Mac's newtab.arc): as you type in a new tab's field, an open tab or a
+    /// pin that matches is picked, and Enter goes to it rather than opening the page again. Off unless asked for.
+    public bool FindsOpenTabs { get => _findsOpenTabs; set { if (Set(ref _findsOpenTabs, value)) Save(); } }
+    /// Settings › Capture pages (Snap.swift): Ctrl+Shift+X takes a picture of part of the page. Off until turned on.
+    public bool Capture { get => _capture; set { if (Set(ref _capture, value)) Save(); } }
+    /// Settings › Keyboard › From any app (Launcher.swift): the address field over whichever app is in front, on a key
+    /// of your own. Off until turned on.
+    public bool Launcher { get => _launcher; set { if (Set(ref _launcher, value)) Save(); } }
+    /// The launcher's key, as Settings shows it ("Ctrl+Alt+Space"); null for none.
+    public string? LauncherKey { get => _launcherKey; set { if (Set(ref _launcherKey, value)) Save(); } }
+    /// What the launcher finds opens in a small window over the app you're in, as a link from another app can.
+    public bool LauncherLittle { get => _launcherLittle; set { if (Set(ref _launcherLittle, value)) Save(); } }
 
     /// Settings › General › Let a script drive Search: the bench socket.
     public bool Bench { get => _bench; set { if (Set(ref _bench, value)) Save(); } }

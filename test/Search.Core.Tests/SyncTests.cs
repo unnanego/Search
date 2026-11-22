@@ -30,7 +30,7 @@ public class SyncTests : IDisposable
 
         public World(string folder)
         {
-            Spaces = new Spaces(TempStore.Unique("spaces"), Notes, Profiles.HomeOf);
+            Spaces = new Spaces(TempStore.Unique("spaces"), Notes, Profiles.HomeOf, Profiles.Rehome);
             Sync = new Sync(Notes, Prefs, Spaces, Pins, Profiles, Bookmarks, name: "Test PC");
             Sync.TurnOn(folder);
         }
@@ -176,6 +176,32 @@ public class SyncTests : IDisposable
         Assert.Null(pc.Spaces.Find(Work));
         Assert.Empty(pc.Pins.Defs(Work));
         Assert.Contains(Work, pc.Spaces.Erasing);
+    }
+
+    [Fact]
+    public async Task PersonalsHomeIsTheOneItHasOnceTheFirstSpaceWasDeleted()
+    {
+        MacWrote();
+        var pc = new World(_folder);
+        pc.Sync.Run(DateTimeOffset.FromUnixTimeSeconds(1763900000));
+        await Disk.Flush();
+        var mac = Mac(Personal, SyncMerge.Live(SyncMerge.Decode(Encoding.UTF8.GetBytes(SyncMergeTests.MacFile), Personal)!.Items));
+        mac.Base = SyncMerge.Decode(Encoding.UTF8.GetBytes(SyncMergeTests.MacFile), Personal)!.Items.ToDictionary();
+        // Deleted here: Work, the next, is Personal's home.
+        Assert.True(pc.Spaces.Remove(Space.FirstId));
+        Assert.Equal(Work, pc.Profiles.HomeOf(Profile.PersonalId));
+        pc.Sync.Run(DateTimeOffset.FromUnixTimeSeconds(1763900100));
+        await Disk.Flush();
+        mac.Pass(1763900200);
+        Assert.DoesNotContain(SyncItems.SpaceKey(Space.FirstId), mac.Items.Keys);
+        // The Mac deletes Work as well: here it is the home, which is never taken away.
+        foreach (var key in mac.Items.Keys.Where(k => k.Contains(SwiftJson.Uuid(Work), StringComparison.Ordinal)).ToList()) mac.Items.Remove(key);
+        mac.Items[SyncItems.SpacesOrder] = SortedJson.Strings([]);
+        mac.Pass(1763900300);
+        var result = pc.Sync.Run(DateTimeOffset.FromUnixTimeSeconds(1763900400));
+        Assert.Empty(result.RemovedSpaces);
+        Assert.Equal([Work], pc.Spaces.Of(Profile.PersonalId).Select(s => s.Id));
+        Assert.Equal(Work, pc.Spaces.Home(Profile.PersonalId));
     }
 
     [Fact]

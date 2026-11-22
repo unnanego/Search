@@ -8,13 +8,13 @@ namespace Search.Core;
 // archive and bookmarks. A window belongs to one profile for its whole life: the profile of the space it shows.
 //
 // There is always one, Personal: everything there was before profiles, left where it was, so nobody's data moves. It
-// comes first and can't be removed, only renamed. Shared by every profile, on purpose: the settings, the extensions,
-// the passwords, downloads and the icons of sites.
+// can't be removed, only renamed; it comes first unless moved, the order being profiles.json's own. Shared by every
+// profile, on purpose: the settings, the extensions, the passwords, downloads and the icons of sites.
 //
 // Nothing of a profile lives in a folder of its own; on the Mac each kind of file is suffixed with the profile's id
 // beside Personal's, in the one store folder, and so it is here:
-//   profiles.json                   [{"id","name","home"}], Personal first; no file while Personal is the only
-//                                   profile and is called Personal
+//   profiles.json                   [{"id","name","home"}], in their order; no file while Personal is the only
+//                                   profile, is called Personal and is at home in the first space
 //   spaces.json                     every profile's spaces, each other profile's marked "profile": <id>
 //   session-<space>.json            a space's tabs, groups and splits (Personal's first space: session.json)
 //   pins.json                       pins by space, and the ones every space shows under "shared:<id>"
@@ -26,8 +26,9 @@ namespace Search.Core;
 // as Spaces.StoreName has every store, beside the spaces with sign-ins of their own, which are named by theirs.
 // Profiles have no colour or icon on the Mac: the badge is the first letter of the name.
 
-/// One profile. `Home` is its first space, which can't be deleted while the profile lives: what a window of the
-/// profile shows with spaces off.
+/// One profile. `Home` is its first space: what a window of the profile shows with spaces off. Any space can be deleted
+/// while the profile keeps another; the home's going makes the next one in the order the home (Personal's too, kept in
+/// profiles.json, which an older Search reads back as the first space).
 public sealed record Profile(Guid Id, string Name, Guid Home)
 {
     public static readonly Guid PersonalId = Spaces.PersonalProfile;
@@ -53,11 +54,11 @@ public sealed class Profiles : Observable
 
     public Profiles(string file = "profiles.json") { _fileName = file; _list = Read(); }
 
-    /// Every profile, Personal first.
+    /// Every profile, in the order the user put them: Personal first unless moved. The order is profiles.json's own.
     public IReadOnlyList<Profile> List => _list;
     /// More than one: only then does anything about profiles show.
     public bool Several => _list.Count > 1;
-    public Profile Get(Guid id) => _list.FirstOrDefault(p => p.Id == id) ?? _list[0];
+    public Profile Get(Guid id) => _list.FirstOrDefault(p => p.Id == id) ?? _list.First(p => p.IsPersonal);
     public bool Has(Guid id) => _list.Any(p => p.Id == id);
     /// A profile's home space, for Spaces (its `homes`): null for one this list doesn't have.
     public Guid? HomeOf(Guid id) => _list.FirstOrDefault(p => p.Id == id)?.Home;
@@ -90,6 +91,16 @@ public sealed class Profiles : Observable
         Changed(nameof(List));
         spaces.Write([.. spaces.All, space]);
         return made;
+    }
+
+    /// Its home deleted (Spaces.Remove): the space that takes its place.
+    public void Rehome(Guid id, Guid space)
+    {
+        var at = _list.ToList().FindIndex(p => p.Id == id);
+        if (at < 0 || _list[at].Home == space) return;
+        _list = [.. _list.Select((p, i) => i == at ? p with { Home = space } : p)];
+        Write();
+        Changed(nameof(List));
     }
 
     public bool Rename(Guid id, string name)
@@ -138,8 +149,12 @@ public sealed class Profiles : Observable
         try { data = File.ReadAllBytes(FilePath); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         var saved = data is null ? [] : Decode(data) ?? Quarantined();
-        var personal = saved.FirstOrDefault(p => p.IsPersonal) is { } named ? Profile.Personal with { Name = named.Name } : Profile.Personal;
-        return [personal, .. saved.Where(p => !p.IsPersonal)];
+        // Where Personal stands in the file is where it was moved to, with the home it has now; a file without it (only
+        // ever written by hand) has it first, at home in the first space.
+        var at = saved.FindIndex(p => p.IsPersonal);
+        var list = saved.Where(p => !p.IsPersonal).ToList();
+        list.Insert(Math.Max(at, 0), at >= 0 ? Profile.Personal with { Name = saved[at].Name, Home = saved[at].Home } : Profile.Personal);
+        return list;
     }
 
     private List<Profile> Quarantined() { Store.Quarantine(FilePath); return []; }

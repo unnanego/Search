@@ -36,6 +36,7 @@ public sealed partial class MainWindow
     private void ToggleHiding()
     {
         if (_picking is not null) { StopPicking(); return; }
+        _snapper?.Stop();
         if (_browser.Selected is not { Live: true, Url: not null } tab) return;
         _picking = tab;
         _ = Curtain.StartPicking(_pages, tab);

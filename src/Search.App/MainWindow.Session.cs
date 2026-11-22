@@ -25,10 +25,12 @@ public sealed partial class MainWindow
         _browser.Groups.Clear();
         var kept = _owner ? Session.Read(space ?? _space) : _record?.Rows.GetValueOrDefault(SwiftJson.Uuid(space ?? _space)) ?? Session.Shape.Empty;
         var shape = WithPins(kept, space ?? _space);
+        // Which folder holds a pinned row is the pin's own, in pins.json, not the session's.
+        var defs = Pinned.Defs(space ?? _space).ToDictionary(d => d.Id);
         foreach (var entry in shape.Tabs)
         {
             var tab = new Tab { Title = entry.Title, Name = entry.Name, Muted = entry.Muted, Touched = entry.Touched, Store = _browser.Store };
-            if (entry.Pin is { } letter) { tab.PinId = entry.PinId ?? Guid.NewGuid(); tab.Letter = letter; tab.Home = Uri.TryCreate(entry.Home ?? entry.Url, UriKind.Absolute, out var home) ? home : null; }
+            if (entry.Pin is { } letter) { tab.PinId = entry.PinId ?? Guid.NewGuid(); tab.Letter = letter; tab.Home = Uri.TryCreate(entry.Home ?? entry.Url, UriKind.Absolute, out var home) ? home : null; tab.Listed = entry.Listed == true; if (defs.GetValueOrDefault(tab.PinId.Value) is { } def) { tab.Folder = def.Folder; tab.PinPair = def.Pair; } }
             else if (entry.GroupId is { } group && shape.Groups?.Any(g => g.Id == group) == true) tab.GroupId = group;
             if (Uri.TryCreate(entry.Url, UriKind.Absolute, out var url)) tab.Url = url;
             _browser.Insert(tab, _browser.Ordinary.Count());        }
@@ -150,7 +152,7 @@ public sealed partial class MainWindow
         var kept = row.Where(t => !t.Private && t.Url is not null).ToList();
         var entries = kept.Select(t => new Session.Entry(t.Url!.AbsoluteUri, t.Title)
         {
-            Name = t.Name, Muted = t.Muted, Touched = t.Touched, Pin = t.Letter, PinId = t.PinId, Home = t.Home?.AbsoluteUri, Listed = t.Pinned ? false : null, GroupId = t.Pinned ? null : t.GroupId
+            Name = t.Name, Muted = t.Muted, Touched = t.Touched, Pin = t.Letter, PinId = t.PinId, Home = t.Home?.AbsoluteUri, Listed = t.Pinned ? t.Listed : null, GroupId = t.Pinned ? null : t.GroupId
         }).ToList();
         // A private tab in front isn't written; the nearest kept tab before it is marked in front instead.
         var front = selected is null ? -1 : row.ToList().IndexOf(selected);

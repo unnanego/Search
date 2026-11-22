@@ -191,7 +191,7 @@ What Phase 3 taught us:
 
 Not done:
 - **Side panel:** needs extensions, so it moves to Phase 4.
-- **Pin folders, live folders and pins shared across windows:** the models are ported; the window doesn't use them yet.
+- **Pin folders, live folders and pins shared across windows:** the models are ported; the window doesn't use them yet. (Pins shared across windows came in Phase 5, pinned rows and folders in Phase 6.)
 - **The pins file:** `pins.json` isn't written yet. Pins live in each space's session, which the Mac also reads when `pins.json` is missing.
 - **Swipe between spaces, and drag-and-drop of pins.**
 - **The Mac's picture-based Ctrl+Tab switcher.** Ctrl+Tab walks the row, as the README says.
@@ -294,6 +294,30 @@ Not done:
 - **The upstream triage** (section 5) wasn't done this phase.
 
 **Phase 6 — Later.** Local AI engine, translation, live folders, capture, launcher over any app, and whatever upstream adds meanwhile (triaged from `CHANGELOG.md` each phase).
+
+*Phase 6 status (2026-11-22): built, without the AI add-on and translation.* The AI add-on is held back on the Mac too (off in every build since 1.0.5), so it waits; translation waits because Windows has no on-device translation for WebView2 to use. `python test/phase6.py` runs 42 checks in two test worlds of its own and they pass, the launcher's taken by a real key press. Phases 1–5 still pass; Core and Engine have 1,194 unit tests. Built:
+- **The address field from any app** (Launcher.cs; Settings › Open the address field from any app, off until turned on). A key of your own, Ctrl+Alt+Space suggested (the Mac's ⇧⌘Space would be Ctrl+Shift+Space, which Office and Visual Studio use), raises a field over whichever app is in front. It answers from the window in front's profile, open pages first, and Enter goes to the tab that has it or opens it as a link from another app would. Escape, Ctrl+W or the key again puts it away and gives the keys back to the app it came over; what was typed waits for the next time. While a window of Search's is in front the key is given back (UnregisterHotKey), so it still types in pages. Keys Windows keeps (Alt+Tab, Win+letter and the like) are refused in Settings, and so is one another app already has.
+- **Capture** (Snap.cs, snap.js; Settings › Capture pages, off until turned on): Ctrl+Shift+X raises a layer over the page. Drag an area, click an element, or press Whole Page. The picture is taken through DevTools' `Page.captureScreenshot` once the layer is gone, goes to the clipboard (never the cloud clipboard; from a private tab, not into clipboard history either) and into the space's downloads folder as `Capture <date> at <time>.png`. Pages taller than 16,384 px are taken in bands and stacked; past the Mac's caps the top of the page is taken, and the notice says so.
+- **Pinned rows, pin folders and live folders** (MainWindow.Folders.cs; Settings › Pinned rows, Folders in pinned rows, both off until turned on): Arc's tiers, squares then rows. A pin's menu offers Show as Row / Show as Square, Move to Folder, and New Folder with This Pin. A folder's menu renames, folds, nests, deletes (what it held goes up a level) and refreshes a live one. A right-click on the column where there is no tab makes a folder or a live folder. A live folder is filled from a feed, RSS, Atom or RDF, or a page that names one: fetched a little after launch, every half hour and on Refresh, with no cookies, no cache, 15 s/30 s timeouts and a 2 MB cap. Its posts open in a new tab, never as pins. Folders are pin-folders.json's and a pin's folder is pins.json's, as on the Mac, so they Sync.
+- **Upstream, triaged** in [UPSTREAM.md](UPSTREAM.md): 73 commits since `9cc5f07`, 16 to port. Ported here: Reddit's promoted posts; YouTube's ad-blocker check passing and its first video starting at once; Hide Elements and site styles under a style CSP (adopted sheets); Ctrl+O keeping a peek; the last tab across the top never cut off and the window moving from above the tabs; a download into a folder that can't be written asking where to save; a sleeping tab keeping its sessionStorage; Try HTTPS first (off by default); profiles in the file's order; any space deletable, the first included; Arc's spaces replacing an untouched first space; Ctrl+T finding your open tabs (off by default).
+
+What Phase 6 taught us:
+- **A global key isn't the window's to take while the window is in front.** RegisterHotKey takes the key from every app, Search's own pages included, so it's asked for only while Search isn't in front, following Windows' foreground and minimise events. Windows tells of a minimise as it starts, while the window still shows, so the launcher asks again half a second later.
+- **The launcher must bring Search forward before it hides.** Hidden first, the keys go to whichever app is next, and Windows no longer lets Search take them back. The field is put away but left on screen until the window it opened is in front.
+- **WebView2 ignores a `<style>` from Search's world on a page whose CSP limits styles**, as WebKit did. Constructed, adopted sheets aren't stopped.
+- **WebView2 sends a load Search starts itself before NavigationStarting can cancel it.** Try HTTPS first upgrades those loads before they go, and cancels only those the page starts.
+- **WebView2 doesn't upgrade http:// to https:// on its own** (Chromium 157 here): the switch is the whole feature.
+- **YouTube, Reddit and doubleclick are HSTS-preloaded**, so a test can't map them to its own http server. Their checks ran through a local proxy and a self-signed certificate made for the run, never the real sites.
+- **Right after a window closes, the one left can briefly have no `XamlRoot`**, so the bench's `press` now checks for one, as `probe` did.
+- **A crash at launch with tabs across the top** was in the Phase 5 build: the field's first slot wasn't one `Detach` knew. Fixed.
+
+Not done:
+- **The AI add-on and translation** (above).
+- **Pinning a split as a split** (`3df5362`): a pin's `pair` is kept in pins.json so a Mac's file doesn't lose it, but a split isn't pinned as one here.
+- **Dragging a pin into a folder**, and dragging folders: the menus do it for now.
+- **Profiles in one window, the same tabs in every window, per-window folding, and deleting a removed space's or profile's data from disk**, still as Phase 5 left them.
+- **Not looked at on screen:** the launcher's panel, the capture layer, the pinned rows and the new Settings entries were checked through the bench and a real key press, not by eye. The save-where picker for an unwritable downloads folder ran only with its answer given in advance.
+- **A crash in `Pages.Adopt`** (an access violation setting a new window's `NewWindow`), seen while porting when an extension called `chrome.tabs.create` from its button, and three times during one full run of the suites, though not in the next. Every suite passes; the cause isn't found yet.
 
 The heaviest phase is now 3 (the most UI). Spike 1 shrank phase 4 to UI, the `tabs`/`windows` shim, and testing real extensions.
 

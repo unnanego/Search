@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Search.Core;
 
 // Tabs you aren't using, put to sleep (Sleep.swift).
@@ -88,6 +90,60 @@ public static class Sleep
     /// What a page is asked for before it goes, and given back once it is built again.
     public const string ReadScroll = "[window.scrollX, window.scrollY]";
     public static string RestoreScroll(Slept slept) => FormattableString.Invariant($"window.scrollTo({slept.ScrollX}, {slept.ScrollY})");
+
+    // A tab keeps its sessionStorage through sleep (KeptSession in Sleep.swift). The web view built to wake it starts a
+    // new browsing session, and sessionStorage goes with the old one, so a draft, a form half filled or a step of a
+    // checkout some sites keep only there was lost. WebView2 has no way to hand it from one view to the next, so the
+    // page's own is read as it falls asleep and written back as it wakes, before any of its scripts run. The page
+    // itself only (frames inside it lose theirs, as before); not for a private tab, so nothing of one is held after its
+    // view goes; not past SessionCap, since sleep is there to give memory back. Read and written in Search's world,
+    // where a page can't stand in for the functions used: storage is the frame's, the same in every world.
+
+    /// Past this, a page's storage isn't kept: half a megabyte, as the Mac's.
+    public const int SessionCap = 512 * 1024;
+
+    /// What the page is asked for before it goes: `[origin, [[key, value], …]]` as JSON, or null when it has nothing.
+    public const string ReadSession = """
+        (() => {
+          try {
+            const s = sessionStorage;
+            if (!s.length) return null;
+            const items = [];
+            for (let i = 0; i < s.length; i++) { const k = s.key(i); items.push([k, s.getItem(k)]); }
+            return JSON.stringify([location.origin, items]);
+          } catch (e) { return null; }
+        })()
+        """;
+
+    /// What a tab keeps of what ReadSession answered: nothing for a private tab, past the cap, or not in its shape (it
+    /// goes into a script as it is, so only JSON of that shape ever does).
+    public static string? KeepSession(string? read, bool @private) => !@private && read is { Length: > 0 } && System.Text.Encoding.UTF8.GetByteCount(read) <= SessionCap && Shaped(read) ? read : null;
+
+    private static bool Shaped(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Array && root.GetArrayLength() == 2 && root[0].ValueKind == JsonValueKind.String && root[1].ValueKind == JsonValueKind.Array
+                && root[1].EnumerateArray().All(p => p.ValueKind == JsonValueKind.Array && p.GetArrayLength() == 2 && p[0].ValueKind == JsonValueKind.String && p[1].ValueKind == JsonValueKind.String);
+        }
+        catch (JsonException) { return false; }
+    }
+
+    /// For the woken tab's documents, ahead of their scripts, until its first page has loaded: the top frame only, only
+    /// for the same origin, and only into a session that's still empty. `kept` is KeepSession's JSON, put in as a
+    /// literal; a script that doesn't parse throws before it writes anything.
+    public static string RestoreSession(string kept) => $$"""
+        (() => {
+          try {
+            if (window !== top) return;
+            const [origin, items] = {{kept}};
+            if (location.origin !== origin || sessionStorage.length) return;
+            for (const [k, v] of items) sessionStorage.setItem(k, v);
+          } catch (e) {}
+        })();
+        """;
 
     /// Away this long, a tab sleeps.
     public static TimeSpan Wait(SleepPace pace) => pace switch { SleepPace.Later => TimeSpan.FromHours(2), SleepPace.Sooner => TimeSpan.FromMinutes(10), _ => TimeSpan.FromMinutes(30) };

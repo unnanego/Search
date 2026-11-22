@@ -79,10 +79,11 @@ public sealed partial class MainWindow
 
     private async Task RenameProfile(Guid id) { if (await AskName("Rename profile", App.Shared.Profiles.Get(id).Name, "Rename") is { } name && App.Shared.Profiles.Rename(id, name)) RetitleAll(); }
 
-    private async Task RemoveProfile(Guid id)
+    /// `detail`: what the dialog says, when asked from somewhere that says more (a profile's last space).
+    private async Task RemoveProfile(Guid id, string? detail = null)
     {
         var profile = App.Shared.Profiles.Get(id);
-        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Remove {profile.Name}?", Content = "Its windows close, and its spaces, tabs, history, bookmarks and sign-ins are deleted from this PC.", PrimaryButtonText = "Remove", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
+        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Remove {profile.Name}?", Content = detail ?? "Its windows close, and its spaces, tabs, history, bookmarks and sign-ins are deleted from this PC.", PrimaryButtonText = "Remove", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = Root.ActualTheme };
         if (await dialog.ShowAsync() == ContentDialogResult.Primary) DeleteProfile(id);
     }
 

@@ -94,4 +94,30 @@ public class SleepTests
         Assert.Equal("window.scrollTo(0, 1009.5)", Sleep.RestoreScroll(slept));
         Assert.Equal("[window.scrollX, window.scrollY]", Sleep.ReadScroll);
     }
+
+    /// A page's sessionStorage kept through sleep (KeptSession): only an ordinary tab's, only up to the cap, and only
+    /// JSON of the shape the page was asked for, since it goes into a script as it is.
+    [Fact]
+    public void ASleepingTabKeepsItsSessionStorage()
+    {
+        const string read = """["https://shop.example",[["draft","half a sentence"],["step","2"]]]""";
+        Assert.Equal(read, Sleep.KeepSession(read, @private: false));
+        Assert.Null(Sleep.KeepSession(read, @private: true));
+        Assert.Null(Sleep.KeepSession(null, @private: false));
+        Assert.Null(Sleep.KeepSession("", @private: false));
+        var big = $$"""["https://shop.example",[["k","{{new string('x', Sleep.SessionCap)}}"]]]""";
+        Assert.Null(Sleep.KeepSession(big, @private: false));
+        var justUnder = $$"""["https://shop.example",[["k","{{new string('x', Sleep.SessionCap - 40)}}"]]]""";
+        Assert.NotNull(Sleep.KeepSession(justUnder, @private: false));
+        // Counted in UTF-8 bytes, as the Mac counts them: two bytes a letter here.
+        Assert.Null(Sleep.KeepSession($$"""["https://a.example",[["k","{{new string('é', Sleep.SessionCap / 2)}}"]]]""", @private: false));
+        foreach (var odd in new[] { "alert(1)", "[1,2]", """["https://a.example"]""", """["https://a.example",[["k",1]]]""", """["https://a.example",[["k"]]]""", """{"a":1}""", "[\"x\",[]]);alert(1);([" })
+            Assert.Null(Sleep.KeepSession(odd, @private: false));
+        var script = Sleep.RestoreSession(read);
+        Assert.Contains("const [origin, items] = " + read + ";", script);
+        Assert.Contains("if (window !== top) return;", script);
+        Assert.Contains("location.origin !== origin || sessionStorage.length", script);
+        Assert.Contains("sessionStorage.setItem(k, v)", script);
+        Assert.Contains("JSON.stringify([location.origin, items])", Sleep.ReadSession);
+    }
 }

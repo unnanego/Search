@@ -45,8 +45,63 @@ public sealed partial class MainWindow
             case "probe":
                 return Probe();
             // Test runs only, as on the Mac: a key as the window takes it, and typing into the field or find.
-            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "route" or "extensions" or "extinstall" or "extconfirm" or "extpress" or "extpopup" or "extpanel" or "extremove" or "extenable" or "extpin" or "extsites" or "extreload" or "extupdate" or "notice" or "newwindow" or "closewindow" or "quit" or "addprofile" or "renameprofile" or "removeprofile" or "profiles" or "sync" or "importsources" or "import" or "agents" when !Store.Testing:
+            case "press" or "type" or "select" or "answer" or "keep" or "pick" or "panelaction" or "edge" or "keeplittle" or "keeppeek" or "spaces" or "addspace" or "space" or "removespace" or "route" or "extensions" or "extinstall" or "extconfirm" or "extpress" or "extpopup" or "extpanel" or "extremove" or "extenable" or "extpin" or "extsites" or "extreload" or "extupdate" or "notice" or "newwindow" or "closewindow" or "quit" or "addprofile" or "renameprofile" or "removeprofile" or "profiles" or "sync" or "importsources" or "import" or "agents" or "saveas" or "launcher" or "capture" or "pinrows" when !Store.Testing:
                 return BenchServer.Error($"{Text("do")} only works on a --test run");
+            // Capture: turned on ("on"), the key pressed ("start"), then a choice made in the page as a pointer would
+            // ("area": [x, y, w, h], "element": [x, y], "page"), or Esc ("escape"); what was taken last, after.
+            case "capture":
+                if (request["on"] is JsonValue captureOn && captureOn.TryGetValue<bool>(out var capturing)) _prefs.Capture = capturing;
+                if (Flag("start")) { _ = ToggleCapture(); await Task.Delay(300); }
+                var snapTab = _snapper?.Tab;
+                if (snapTab is not null && request["area"] is JsonArray area) await _pages.Evaluate(snapTab, $"__searchSnap.area({area[0]}, {area[1]}, {area[2]}, {area[3]})");
+                if (snapTab is not null && request["element"] is JsonArray point) await _pages.Evaluate(snapTab, $"__searchSnap.element({point[0]}, {point[1]})");
+                if (snapTab is not null && Flag("page")) await _pages.Evaluate(snapTab, "__searchSnap.page()");
+                if (Flag("escape")) Press("esc");
+                if (Number("wait") is { } waitFor) { var until = DateTime.UtcNow.AddSeconds(waitFor); while (_snapper?.Live == true && DateTime.UtcNow < until) await Task.Delay(100); await Task.Delay(200); }
+                var layer = snapTab is not null && _pages.WorldOf(snapTab) is not null ? (await _pages.Evaluate(snapTab, "!!(globalThis.__searchSnap && __searchSnap.live())"))?.ToString() : null;
+                return new JsonObject { ["on"] = _prefs.Capture, ["live"] = _snapper?.Live ?? false, ["layer"] = layer == "true", ["path"] = LastCapture?.Path, ["width"] = LastCapture?.Width, ["height"] = LastCapture?.Height, ["cropped"] = LastCapture?.Cropped, ["notice"] = LastCapture?.Notice };
+            // Pinned rows and their folders, as their menus work them: a pin shown as a row or a square ("listed":
+            // {tab, on}), a folder made ("newfolder": {name, parent?, pin?}), a pin into a folder ("movepin": {tab,
+            // folder|null}), folded ("fold"), renamed ("rename": {folder, name}), deleted ("deletefolder"), a live folder
+            // made from a feed ("livefolder": {url, parent?}), refreshed ("refresh"), a post opened ("post": {folder,
+            // index}); the lines as the column draws them, after.
+            case "pinrows":
+                Guid? FolderId(JsonNode? node) => node?.GetValue<string>() is { } text && SwiftJson.Uuid(text) is { } uuid ? uuid : null;
+                if (request["listed"] is JsonObject listed && Find(listed["tab"]?.GetValue<string>() ?? "") is { } listedTab) { _browser.SetListed(listedTab, listed["on"]?.GetValue<bool>() ?? true); PinsEdited(); }
+                if (request["newfolder"] is JsonObject folderMade) await NewFolder(FolderId(folderMade["parent"]), folderMade["pin"]?.GetValue<string>() is { } pinId ? Find(pinId) : null, folderMade["name"]?.GetValue<string>() ?? PinFolders.DefaultName);
+                if (request["movepin"] is JsonObject moving && Find(moving["tab"]?.GetValue<string>() ?? "") is { } movingTab) MovePin(movingTab, FolderId(moving["folder"]));
+                if (FolderId(request["fold"]) is { } folding) ToggleFolder(folding);
+                if (request["rename"] is JsonObject folderRenaming && FolderId(folderRenaming["folder"]) is { } renamed) SetFolders(PinFolders.Renamed(SpaceFolders, renamed, folderRenaming["name"]?.GetValue<string>() ?? ""));
+                if (FolderId(request["deletefolder"]) is { } deleting) DeleteFolder(deleting);
+                if (request["livefolder"] is JsonObject live) await NewLiveFolder(FolderId(live["parent"]), live["url"]?.GetValue<string>() ?? "");
+                if (FolderId(request["refresh"]) is { } refreshing && App.Live is { } liveFolders) { await liveFolders.Refresh(refreshing, _space); _row.Sync(); }
+                if (request["post"] is JsonObject posting && FolderId(posting["folder"]) is { } postFolder && SpaceFolders.FirstOrDefault(f => f.Id == postFolder)?.Items is { } posts && posting["index"]?.GetValue<int>() is { } postAt && postAt < posts.Count) OpenPost(posts[postAt]);
+                return new JsonObject
+                {
+                    ["rows"] = _prefs.ShowsPinRows, ["folders"] = _prefs.ShowsPinFolders,
+                    ["squares"] = new JsonArray(_row.Pins.Select(t => (JsonNode)JsonValue.Create(t.ShortId)!).ToArray()),
+                    ["lines"] = new JsonArray(_row.PinRows.Select(l => (JsonNode)new JsonObject
+                    {
+                        ["kind"] = l.Kind.ToString().ToLowerInvariant(), ["id"] = SwiftJson.Uuid(l.Id), ["title"] = l.Title, ["depth"] = l.Depth, ["tab"] = l.Tab?.ShortId,
+                        ["live"] = l.Folder?.IsLive, ["collapsed"] = l.Folder?.Collapsed, ["tip"] = l.Tip, ["url"] = l.Post?.Link, ["selected"] = ReferenceEquals(PinRows.SelectedItem, l)
+                    }).ToArray())
+                };
+            // The launcher (Launcher.cs), as Settings and a person work it: switched on or off ("on"), its key ("key", or
+            // "none"), "little", Settings listening for a key ("recording"), then the key pressed ("fire"), letters typed,
+            // a row walked to or picked, Enter, Escape; its state after, whatever was asked.
+            case "launcher":
+                if (request["on"] is JsonValue launcherOn && launcherOn.TryGetValue<bool>(out var turnOn)) _prefs.Launcher = turnOn;
+                if (Text("key") is { } launcherKey) _prefs.LauncherKey = launcherKey == "none" ? null : launcherKey;
+                if (request["little"] is JsonValue littleOn && littleOn.TryGetValue<bool>(out var smallWindow)) _prefs.LauncherLittle = smallWindow;
+                if (request["recording"] is JsonValue rec && rec.TryGetValue<bool>(out var recording)) Launcher.Recording = recording;
+                if (Flag("refresh")) Launcher.Refresh();
+                if (Flag("fire")) Launcher.Toggle();
+                if (Text("type") is { } letters) Launcher.TypeLetters(letters);
+                if (Number("walk") is { } step) Launcher.Walk((int)step);
+                if (Number("pick") is { } row) Launcher.Pick((int)row);
+                if (Flag("submit")) Launcher.Submit();
+                if (Flag("escape")) Launcher.Dismiss();
+                return Launcher.State();
             // A window more, from this one (Ctrl+N), or this one closed; "window" in any request names the one to act in.
             case "newwindow":
                 App.NewWindow(this);
@@ -96,12 +151,17 @@ public sealed partial class MainWindow
                 state["line"] = _agentLine.Visibility == Visibility.Visible ? _agentSaid.Text : null;
                 state["agentTabs"] = _browser.Tabs.Count(t => t.Agent);
                 return state;
+            // The save picker answered ahead of time, for a download whose folder can't be written to: "answer" a path,
+            // "" for Cancel, absent to show the picker again; how many times it has been asked.
+            case "saveas":
+                if (request.ContainsKey("answer")) _saveAnswer = Text("answer");
+                return new JsonObject { ["asked"] = _savesAsked };
             case "quit":
                 DispatcherQueue.TryEnqueue(App.Quit);
                 return new JsonObject { ["ok"] = true };
             case "press":
                 if (Text("keys") is not { } combo) return BenchServer.Error("press needs keys, e.g. ctrl+t");
-                var before = Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot));
+                var before = Root.XamlRoot is { } focusRoot ? Describe(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(focusRoot)) : "no XamlRoot";
                 return Press(combo) ? new JsonObject { ["ok"] = true, ["focusedBefore"] = before } : BenchServer.Error($"nothing answers {combo} (focus: {before})");
             case "type":
                 if (Text("text") is not { } words) return BenchServer.Error("type needs text");
@@ -147,6 +207,13 @@ public sealed partial class MainWindow
             case "space":
                 GoToSpaceNumber((int)(Number("number") ?? 1));
                 return new JsonObject { ["space"] = CurrentSpace.Name };
+            // Remove… on the window's space by its number, as the dialog's Remove does; the home and the list after.
+            case "removespace":
+                var mine = _spaces.Of(Profile);
+                var number = (int)(Number("number") ?? 0);
+                if (number < 1 || number > mine.Count || !_spaces.CanRemove(mine[number - 1].Id)) return BenchServer.Error("no space there that can go");
+                DeleteSpace(mine[number - 1].Id);
+                return new JsonObject { ["space"] = CurrentSpace.Name, ["home"] = _spaces.Find(_spaces.Home(Profile))?.Name, ["spaces"] = new JsonArray(_spaces.Of(Profile).Select(s => (JsonNode)JsonValue.Create(s.Name)!).ToArray()) };
             case "route":
                 if (Text("site") is not { } site || _spaces.All.FirstOrDefault(s => s.Name == Text("name")) is not { } to) return BenchServer.Error("route needs a site and a space's name");
                 _routes.On = true;
@@ -264,6 +331,13 @@ public sealed partial class MainWindow
                 if (Text("expression") is not { } expression) return BenchServer.Error("world needs an expression");
                 await _pages.Ensure(found);
                 return new JsonObject { ["value"] = (await _pages.Evaluate(found, expression))?.DeepClone() };
+            // Put to sleep now, as the idle timer would, whatever the rules say of it (a bench tab never sleeps by itself);
+            // a verb that reads the page (text, world) wakes it.
+            case "sleep" when Store.Testing:
+                if (found.Live) await PutToSleep(found);
+                var slept = Describe(found);
+                slept["keptSession"] = found.KeptSession is not null;
+                return slept;
             case "pin" when Store.Testing:
                 if (Flag("off")) _browser.Unpin(found); else _browser.Pin(found);
                 return Describe(found);
@@ -316,6 +390,9 @@ public sealed partial class MainWindow
         ["settings"] = _settings is not null,
         ["field"] = FieldText.FocusState != FocusState.Unfocused,
         ["fieldText"] = FieldText.Text,
+        ["offerPicked"] = Offers.Visibility == Visibility.Visible ? Offers.SelectedIndex : -1,
+        ["offers"] = new JsonArray((Offers.ItemsSource as IEnumerable<Offer> ?? []).Select(o => (JsonNode)new JsonObject { ["url"] = o.Suggestion.Url.AbsoluteUri, ["kind"] = o.Suggestion.Kind.ToString().ToLowerInvariant() }).ToArray()),
+        ["fieldText"] = FieldText.Text,
         ["placeholder"] = FieldText.PlaceholderText,
         ["suggesting"] = Offers.Visibility == Visibility.Visible,
         ["offering"] = new JsonArray((Offers.ItemsSource as IEnumerable<Offer> ?? []).Select(o => (JsonNode)JsonValue.Create(o.Suggestion.Kind + " " + o.Suggestion.Key)!).ToArray()),
@@ -343,17 +420,27 @@ public sealed partial class MainWindow
         ["panelRows"] = new JsonArray((PanelRows.ItemsSource as IEnumerable<PanelRow> ?? []).Select(r => (JsonNode)new JsonObject { ["title"] = r.Title, ["detail"] = r.Detail }).ToArray()),
         ["selected"] = _browser.Selected?.ShortId,
         ["space"] = CurrentSpace.Name,
+        ["home"] = _spaces.Find(_spaces.Home(Profile))?.Name,
         ["column"] = new JsonArray(_row.Items.Select(i => (JsonNode)JsonValue.Create(i is GroupRow g ? "group " + g.Name + (g.Group.Collapsed ? " (folded)" : "") : i is Tab t ? t.ShortId : "?")!).ToArray()),
         ["pins"] = new JsonArray(_row.Pins.Select(p => (JsonNode)JsonValue.Create(p.ShortId)!).ToArray()),
         ["spaces"] = new JsonArray(_spaces.All.Select(s => (JsonNode)JsonValue.Create(s.Name)!).ToArray()),
         ["store"] = _browser.Store,
         ["panes"] = new JsonArray(_pages.Panes.Select(p => (JsonNode)new JsonObject { ["id"] = p.Tab.ShortId, ["x"] = p.Rect.X, ["y"] = p.Rect.Y, ["w"] = p.Rect.Width, ["h"] = p.Rect.Height }).ToArray()),
         ["tabs"] = _browser.Ordinary.Count(),
+        ["strip"] = StripState(),
         ["window"] = App.Windows.IndexOf(this),
         ["owner"] = _owner,
         ["profile"] = App.Shared.Profiles.Get(Profile).Name,
         ["windowTitle"] = Title,
         ["windows"] = new JsonArray(App.Windows.Select(w => (JsonNode)new JsonObject { ["kind"] = "browser", ["title"] = w.Title, ["visible"] = w.AppWindow.IsVisible, ["front"] = w == App.Acting, ["space"] = w.CurrentSpace.Name, ["tabs"] = w._browser.Ordinary.Count(), ["frame"] = new JsonArray(w.AppWindow.Position.X, w.AppWindow.Position.Y, w.AppWindow.Size.Width, w.AppWindow.Size.Height) }).ToArray())
+    };
+
+    /// The tabs across the top: how wide the strip is shown and may be, how far its tabs run and where it is scrolled to,
+    /// and what is cut out of the title bar (window pixels: x, y, width, height).
+    private JsonObject StripState() => new()
+    {
+        ["shown"] = Strip.ActualWidth, ["max"] = Strip.MaxWidth, ["bar"] = TopBar.ActualWidth, ["extent"] = Descendant<ScrollViewer>(Strip)?.ExtentWidth, ["offset"] = Descendant<ScrollViewer>(Strip)?.HorizontalOffset,
+        ["passthrough"] = new JsonArray(_passthrough.Select(r => (JsonNode)new JsonArray(r.X, r.Y, r.Width, r.Height)).ToArray()), ["scale"] = Root.XamlRoot?.RasterizationScale
     };
 
     private static JsonObject Profiles() => new()

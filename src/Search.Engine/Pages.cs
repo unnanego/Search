@@ -41,6 +41,21 @@ public sealed class Pages
     public event Action<Tab, CoreWebView2DownloadOperation>? DownloadStarted;
     /// Anything else Search's own scripts in a page say (see World): its kind, and the message.
     public event Action<Tab, string, JsonElement>? Message;
+    /// Where to save a download whose folder can't be written to, asked of you with the path WebView2 chose; null when
+    /// you'd rather not. The window shows its save picker.
+    public Func<string, Task<string?>>? AskWhereToSave { get; set; }
+    /// Settings › Try HTTPS first, read on each navigation, so the switch reaches every page's next load.
+    public Func<bool> TriesHttpsFirst { get; set; } = () => false;
+
+    /// Each woken tab's script putting its sessionStorage back (Sleep.RestoreSession), until its first page has loaded.
+    private readonly Dictionary<Tab, string> _restoring = new();
+    /// Each tab's http:// load being tried over HTTPS (HttpsFirst): the address asked for, the https:// one, and that
+    /// navigation's id once it has started.
+    private readonly Dictionary<Tab, (Uri Asked, Uri Tried, ulong? Id)> _tryingHttps = new();
+    /// The http:// navigation given up for that try: how it ends is no page's load.
+    private readonly Dictionary<Tab, ulong> _givenUp = new();
+    /// Per tab, the hosts whose HTTPS failed: loaded as asked from then on.
+    private readonly Dictionary<Tab, HashSet<string>> _plainHosts = new();
 
     /// The window's keys, by name. A web view keeps the keyboard in its own process and WinUI hands none of it to the
     /// window, so each page gets a listener at document start that passes these keys, and only these, to the window.
@@ -233,6 +248,10 @@ public sealed class Pages
         var world = await World.Open(core, _scripts.Prepend(KeyListener(tab.Peek ? Keys.Append("esc").ToList() : Keys)));
         world.Message += (kind, body) => OnMessage(tab, kind, body);
         _worlds[tab] = world;
+        // A woken page's sessionStorage, back before its scripts run, in Search's world: a page can't stand in for what
+        // it calls there, and the storage is the frame's, the same in every world. Taken out once the page has loaded.
+        if (tab.KeptSession is { } kept && !tab.Private && await world.Add(Search.Core.Sleep.RestoreSession(kept)) is { } restoring) _restoring[tab] = restoring;
+        else tab.KeptSession = null;
         // A coding agent's page never has a file chosen for it: the chooser is caught and never shown.
         if (tab.Agent) { try { await core.CallDevToolsProtocolMethodAsync("Page.setInterceptFileChooserDialog", """{"enabled":true}"""); } catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { } }
         // The ad blocker before the first request, as the Mac holds the first loads until its list is ready.
@@ -251,7 +270,7 @@ public sealed class Pages
         tab.NavigateRequested += Navigate;
         tab.CommandRequested += Command;
         // Loading from the moment it's asked to, not from the first event: a tab in that moment isn't idle.
-        if (navigate && tab.Url is { } url) { tab.Loading = true; core.Navigate(url.AbsoluteUri); }
+        if (navigate && tab.Url is { } url) Load(tab, core, url);
         Arrange();
         view.IsTabStop = true;
         // Only if the new web view took it: by now the keys may rightly be somewhere else.
@@ -269,14 +288,14 @@ public sealed class Pages
     private void Wire(Tab tab, CoreWebView2 core)
     {
         if (tab.Agent) Confine(core);
-        core.NavigationStarting += (_, e) => { if (!e.Cancel) tab.Loading = true; };
+        core.NavigationStarting += (_, e) => { if (!e.Cancel) TryHttps(tab, core, e); if (!e.Cancel) tab.Loading = true; };
         core.SourceChanged += (_, _) => { if (Uri.TryCreate(core.Source, UriKind.Absolute, out var url) && url.AbsoluteUri != "about:blank") tab.Url = url; };
         core.DocumentTitleChanged += (_, _) => { tab.Title = core.DocumentTitle; TitleChanged?.Invoke(tab, core.DocumentTitle); };
         core.HistoryChanged += (_, _) => { tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward; };
         core.FaviconChanged += (_, _) => tab.Icon = string.IsNullOrEmpty(core.FaviconUri) ? null : core.FaviconUri;
         core.ContainsFullScreenElementChanged += (_, _) => FullScreen?.Invoke(tab, core.ContainsFullScreenElement);
         core.IsDocumentPlayingAudioChanged += (_, _) => tab.Audible = core.IsDocumentPlayingAudio;
-        core.DownloadStarting += (_, e) => { e.Handled = true; if (tab.Agent) e.Cancel = true; else DownloadStarted?.Invoke(tab, e.DownloadOperation); };
+        core.DownloadStarting += (_, e) => Starting(tab, e);
         core.PermissionRequested += (_, e) =>
         {
             // A coding agent's tab never sees, hears, locates or notifies you, whatever a site was allowed before.
@@ -289,6 +308,21 @@ public sealed class Pages
         core.NotificationReceived += (_, e) => { e.Handled = true; if (!tab.Agent) Notified?.Invoke(tab, e.Notification); };
         core.NavigationCompleted += (_, e) =>
         {
+            if (_givenUp.TryGetValue(tab, out var givenUp) && givenUp == e.NavigationId) { _givenUp.Remove(tab); return; }
+            if (_tryingHttps.TryGetValue(tab, out var trying) && trying.Id == e.NavigationId)
+            {
+                _tryingHttps.Remove(tab);
+                // No HTTPS there, or none that works: the address as asked, once, and that host as asked from then on.
+                if (!e.IsSuccess && FallsBackToHttp(e.WebErrorStatus))
+                {
+                    (_plainHosts.TryGetValue(tab, out var plain) ? plain : _plainHosts[tab] = new()).Add(trying.Asked.IdnHost);
+                    tab.Loading = true;
+                    core.Navigate(trying.Asked.AbsoluteUri);
+                    return;
+                }
+            }
+            // A woken page loaded: its sessionStorage is back. A blank page on the way doesn't count.
+            if (core.Source != "about:blank") Restored(tab);
             tab.Loading = false;
             tab.CanGoBack = core.CanGoBack; tab.CanGoForward = core.CanGoForward;
             if (e.IsSuccess) Loaded?.Invoke(tab);
@@ -307,6 +341,75 @@ public sealed class Pages
         core.NavigationStarting += (_, e) => { if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var url) || !AgentRules.MayLoad(url)) e.Cancel = true; };
         core.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
         core.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
+    }
+
+    /// The woken page has its sessionStorage back: the copy goes, and later pages don't get it.
+    private void Restored(Tab tab)
+    {
+        if (!_restoring.Remove(tab, out var restoring)) return;
+        tab.KeptSession = null;
+        if (_worlds.TryGetValue(tab, out var world)) _ = world.Remove(restoring);
+    }
+
+    /// The https:// form to try first (HttpsFirst), with Try HTTPS first on and unless that host's HTTPS already failed
+    /// in this tab; null to load the address as asked.
+    private Uri? Tried(Tab tab, Uri url) => TriesHttpsFirst() && HttpsFirst.Upgrade(url) is { } https && _plainHosts.GetValueOrDefault(tab)?.Contains(url.IdnHost) != true ? https : null;
+
+    /// A page Search itself sends the tab to (an address, a wake), over HTTPS first where it's to be tried. Not left to
+    /// NavigationStarting: for a load started with Navigate, WebView2 has already sent the http:// request by the time
+    /// it asks, so cancelling there still sent the address, and any cookies, in the clear.
+    private void Load(Tab tab, CoreWebView2 core, Uri url)
+    {
+        tab.Loading = true;
+        if (Tried(tab, url) is { } https) { _tryingHttps[tab] = (url, https, null); core.Navigate(https.AbsoluteUri); }
+        else core.Navigate(url.AbsoluteUri);
+    }
+
+    /// Try HTTPS first for what the page itself starts (a link, a script, a new window): a new top-level http:// load,
+    /// not a redirect, a step back or forward, a reload or a form sent, given up for its https:// form before its
+    /// request goes. How the try ends is NavigationCompleted's.
+    private void TryHttps(Tab tab, CoreWebView2 core, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var url)) return;
+        if (_tryingHttps.TryGetValue(tab, out var trying))
+        {
+            // The try starting, or redirected; anything else means it's been left for another page.
+            if (trying.Id == e.NavigationId) return;
+            if (trying.Id is null && url == trying.Tried) { _tryingHttps[tab] = trying with { Id = e.NavigationId }; return; }
+            _tryingHttps.Remove(tab);
+        }
+        if (e.IsRedirected || e.NavigationKind != CoreWebView2NavigationKind.NewDocument || Tried(tab, url) is not { } https || e.RequestHeaders.Contains("Content-Type")) return;
+        e.Cancel = true;
+        _givenUp[tab] = e.NavigationId;
+        _tryingHttps[tab] = (url, https, null);
+        tab.Loading = true;
+        // Not from inside the event that's being cancelled.
+        _stage.DispatcherQueue.TryEnqueue(() => { if (_views.ContainsKey(tab) && _tryingHttps.TryGetValue(tab, out var now) && now.Tried == https) core.Navigate(https.AbsoluteUri); });
+    }
+
+    /// How an https:// try may fail for the http:// address to be loaded as asked instead: no connection, or no
+    /// certificate worth the name. A page that answered, with whatever status, is the site's.
+    public static bool FallsBackToHttp(CoreWebView2WebErrorStatus status) => status is CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect or CoreWebView2WebErrorStatus.CertificateExpired
+        or CoreWebView2WebErrorStatus.ClientCertificateContainsErrors or CoreWebView2WebErrorStatus.CertificateRevoked or CoreWebView2WebErrorStatus.CertificateIsInvalid
+        or CoreWebView2WebErrorStatus.ServerUnreachable or CoreWebView2WebErrorStatus.Timeout or CoreWebView2WebErrorStatus.ErrorHttpInvalidServerResponse
+        or CoreWebView2WebErrorStatus.ConnectionAborted or CoreWebView2WebErrorStatus.ConnectionReset or CoreWebView2WebErrorStatus.Disconnected or CoreWebView2WebErrorStatus.CannotConnect;
+
+    /// A download begins: never a coding agent's. One into a folder that can't be written to (gone, read-only, on a
+    /// drive no longer there, kept out of by Controlled folder access) failed as it started; you're asked where
+    /// instead, and a folder picked there is one Search may use.
+    private async void Starting(Tab tab, CoreWebView2DownloadStartingEventArgs e)
+    {
+        e.Handled = true;
+        if (tab.Agent) { e.Cancel = true; return; }
+        if (AskWhereToSave is not { } ask || Downloads.CanWrite(Path.GetDirectoryName(e.ResultFilePath))) { DownloadStarted?.Invoke(tab, e.DownloadOperation); return; }
+        var deferral = e.GetDeferral();
+        try
+        {
+            if (await ask(e.ResultFilePath) is { Length: > 0 } chosen) { e.ResultFilePath = chosen; DownloadStarted?.Invoke(tab, e.DownloadOperation); }
+            else e.Cancel = true;
+        }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or System.Runtime.InteropServices.COMException) { e.Cancel = true; }
+        finally { deferral.Complete(); }
     }
 
     /// A page opened another tab: the new one, and the one it came from. A coding agent's tab's are its own too.
@@ -363,7 +466,7 @@ public sealed class Pages
         var core = view.CoreWebView2;
         Privacy.Apply(core.Settings);
         Paint(core);
-        core.DownloadStarting += (_, e) => { e.Handled = true; DownloadStarted?.Invoke(_browser.Selected ?? new Tab(), e.DownloadOperation); };
+        core.DownloadStarting += (_, e) => Starting(_browser.Selected ?? new Tab(), e);
         core.NewWindowRequested += (_, e) => Adopt(e, null);
         await core.AddScriptToExecuteOnDocumentCreatedAsync(shim);
         if (Extensions is { } extensions) await extensions(core.Profile);
@@ -403,7 +506,7 @@ public sealed class Pages
         if (tab.Agent) return;
         if (body.TryGetProperty("combo", out var combo) && combo.GetString() is { } name && (Keys.Contains(name) || tab.Peek && name == "esc")) KeyPressed?.Invoke(tab, name);
     }
-    private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) { tab.Loading = true; core.Navigate(url.AbsoluteUri); } }
+    private void Navigate(Tab tab, Uri url) { if (CoreOf(tab) is { } core) Load(tab, core, url); }
 
     private void Command(Tab tab, TabCommand command)
     {
@@ -436,6 +539,10 @@ public sealed class Pages
         _worlds.Remove(tab);
         _youtube.Remove(tab);
         _windows.Remove(tab);
+        _restoring.Remove(tab);
+        _tryingHttps.Remove(tab);
+        _givenUp.Remove(tab);
+        _plainHosts.Remove(tab);
         tab.NavigateRequested -= Navigate;
         tab.CommandRequested -= Command;
         tab.Live = false;

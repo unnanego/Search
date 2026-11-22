@@ -9,16 +9,6 @@
   if (window !== window.top || globalThis.__searchCurtain) return;
   let frame = null, tag = null, target = null, live = false;
 
-  const sheet = id => {
-    let s = document.getElementById(id);
-    if (!s) {
-      s = document.createElement('style');
-      s.id = id;
-      (document.head || document.documentElement).appendChild(s);
-    }
-    return s;
-  };
-
   const chrome = () => {
     if (frame) return frame;
     frame = document.createElement('div');
@@ -192,17 +182,18 @@
     on, off,
     // Show one hidden thing for as long as the pointer rests on its row. The stylesheet is rebuilt without that one
     // selector rather than fighting it with another rule, so the element comes back with the layout it actually had.
+    // Both sheets through __searchSheet (sheet.js, put in front of this by Curtain.cs), as dress.js's are.
     peek(css, sel) {
-      sheet('office-veil').textContent = css;
-      sheet('office-peek').textContent = sel + ' { outline: 2px solid rgba(23,23,23,.9) !important; outline-offset: 2px !important; }';
+      __searchSheet('office-veil', css);
+      __searchSheet('office-peek', sel + ' { outline: 2px solid rgba(23,23,23,.9) !important; outline-offset: 2px !important; }');
       try {
         const el = document.querySelector(sel);
         if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       } catch (e) {}
     },
     unpeek(css) {
-      sheet('office-veil').textContent = css;
-      sheet('office-peek').textContent = '';
+      __searchSheet('office-veil', css);
+      __searchSheet('office-peek', '');
     }
   };
 })();

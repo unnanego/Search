@@ -57,6 +57,9 @@ public sealed partial class MainWindow
         Key(VirtualKey.H, Ctrl, () => TogglePanel(PanelKind.History));
         Key(VirtualKey.J, Ctrl, () => TogglePanel(PanelKind.Downloads));
         Key(VirtualKey.O, CtrlShift, () => TogglePanel(PanelKind.Bookmarks));
+        // Ctrl+O keeps a peek as a tab, as its "Open as tab" does and as Ctrl+O does in the small window. The peek's
+        // page hands it on like every key here; Ctrl+Enter is left to pages, where it sends.
+        Key(VirtualKey.O, Ctrl, () => { if (_peek is not null) KeepPeek(); });
         Key(VirtualKey.L, CtrlShift, () => TogglePanel(PanelKind.Passwords));
         Key(VirtualKey.D, Ctrl, ToggleBookmark);
         Key(VirtualKey.P, CtrlShift, () => _ = ToggleFloat());
@@ -66,6 +69,7 @@ public sealed partial class MainWindow
         Key(VirtualKey.Left, Ctrl | Alt, () => _browser.StepPane(-1));
         Key(VirtualKey.Right, Ctrl | Alt, () => _browser.StepPane(1));
         Key(VirtualKey.H, CtrlShift, ToggleHiding);
+        Key(VirtualKey.X, CtrlShift, () => _ = ToggleCapture());
         Key(VirtualKey.U, CtrlShift, () => TogglePanel(PanelKind.Hidden));
         Key(VirtualKey.F9, VirtualKeyModifiers.None, () => _ = ToggleReading());
         Key(VirtualKey.Escape, VirtualKeyModifiers.None, PutAway, always: false);
@@ -142,6 +146,7 @@ public sealed partial class MainWindow
         if (_peek is not null) { ClosePeek(); return; }
         if (Switcher.Visibility == Visibility.Visible) { CloseSwitcher(); return; }
         if (_picking is not null) { StopPicking(); return; }
+        if (_snapper?.Stop() == true) return;
         if (FindBar.Visibility == Visibility.Visible) { CloseFind(); return; }
         if (_panel != PanelKind.None) { ClosePanel(); return; }
         if (_fullScreen) SetFullScreen(false);

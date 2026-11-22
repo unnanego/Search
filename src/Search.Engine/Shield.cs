@@ -45,7 +45,10 @@ public static class Shield
         (["as.com", "elpais.com"], ".ad"),
         (["theguardian.com"], ".top-fronts-banner-ad-container"),
         (["independent.co.uk", "the-independent.com"], "#billboard-wrapper"),
-        (["cnn.com"], ".ad-slot-header__wrapper")
+        (["cnn.com"], ".ad-slot-header__wrapper"),
+        // Reddit's own promoted posts: custom elements the page puts straight in its light DOM (the feed, a post's
+        // comments, the sidebar), so a plain hiding rule reaches them. A normal post is a shreddit-post, never one of these.
+        (["reddit.com"], "shreddit-ad-post, shreddit-comments-page-ad, shreddit-sidebar-ad, shreddit-dynamic-ad-link, comment-tree-ad, .promotedlink")
     ];
 
     /// Where YouTube's player reports and fetches ads, never the video.
@@ -88,11 +91,12 @@ public static class Shield
     {
         var rules = Rules(paused).ToJsonString();
         var css = string.Join(", ", _slots) + " { display: none !important; }";
-        var sites = _slotsBySite.Select(s => s.Selector + " { display: none !important; }").ToArray();
+        var bySite = BySite();
+        var sites = bySite.Select(s => s.Css).ToArray();
         var excluded = paused.SelectMany(Patterns).ToArray();
         var scripts = new JsonArray(new JsonObject { ["matches"] = new JsonArray("<all_urls>"), ["exclude_matches"] = Array(excluded), ["css"] = new JsonArray("slots.css"), ["all_frames"] = true, ["run_at"] = "document_start" });
-        for (var i = 0; i < _slotsBySite.Length; i++)
-            scripts.Add(new JsonObject { ["matches"] = Array(_slotsBySite[i].Sites.SelectMany(Patterns)), ["exclude_matches"] = Array(excluded), ["css"] = new JsonArray($"site{i}.css"), ["all_frames"] = true, ["run_at"] = "document_start" });
+        for (var i = 0; i < bySite.Length; i++)
+            scripts.Add(new JsonObject { ["matches"] = Array(bySite[i].Matches), ["exclude_matches"] = Array(excluded), ["css"] = new JsonArray($"site{i}.css"), ["all_frames"] = true, ["run_at"] = "document_start" });
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rules + css + string.Join("", sites) + scripts.ToJsonString())))[..12].ToLowerInvariant();
         if (_written == hash) return hash;
         var manifest = new JsonObject
@@ -112,6 +116,9 @@ public static class Shield
         return hash;
     }
 
+    /// Each site-scoped sheet: the pages it goes on, and what it hides there.
+    internal static (string[] Matches, string Css)[] BySite() => _slotsBySite.Select(s => (s.Sites.SelectMany(Patterns).ToArray(), s.Selector + " { display: none !important; }")).ToArray();
+
     private static JsonArray Array(IEnumerable<string> items) => new(items.Select(i => (JsonNode)i).ToArray());
 
     /// A site and every subdomain of it, as match patterns.
@@ -130,6 +137,9 @@ public static class Shield
         // Google's own ad paths and the video ads SDK, only from YouTube's pages: other players may need the SDK.
         foreach (var filter in new[] { "||google.com/pagead/", "||imasdk.googleapis.com/" })
             rules.Add(Rule(block(), new JsonObject { ["urlFilter"] = filter, ["initiatorDomains"] = new JsonArray("youtube.com", "youtube-nocookie.com") }));
+        // YouTube's own blocker test, a one-line script that sets google_ad_status: let through on YouTube's pages only,
+        // above the third-party block. For an account YouTube enforces on, a failed test puts its wall over the video.
+        rules.Add(Rule(new JsonObject { ["type"] = "allow" }, new JsonObject { ["urlFilter"] = "||static.doubleclick.net/instream/ad_status.js", ["initiatorDomains"] = new JsonArray("youtube.com", "youtube-nocookie.com") }, priority: 2));
         // Paused on a site: everything in its pages is let through, above every rule here.
         foreach (var site in paused)
             rules.Add(Rule(new JsonObject { ["type"] = "allowAllRequests" }, new JsonObject { ["requestDomains"] = new JsonArray(site), ["resourceTypes"] = new JsonArray("main_frame", "sub_frame") }, priority: 100));

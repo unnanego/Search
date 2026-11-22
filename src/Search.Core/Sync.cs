@@ -367,7 +367,7 @@ public sealed class Sync
     {
         var id = profile.Id;
         var local = _spaces.Of(id);
-        var spaces = SyncItems.ApplySpaces(live, local, id, profile.IsPersonal ? Space.FirstId : profile.Home);
+        var spaces = SyncItems.ApplySpaces(live, local, id, profile.Home);
         var changed = false;
         // A space deleted elsewhere: as Delete Space does here, its tabs, its pins, and for one with sign-ins of its
         // own, those too. The window closes its tabs (RemovedSpaces).

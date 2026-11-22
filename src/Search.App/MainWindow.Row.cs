@@ -19,7 +19,13 @@ public sealed partial class MainWindow
     private void OnRowMenu(object sender, RightTappedRoutedEventArgs e)
     {
         if (e.OriginalSource is not FrameworkElement { DataContext: var item } element) return;
-        var menu = item switch { Tab tab => TabMenu(tab), GroupRow heading => GroupMenu(heading.Group), _ => null };
+        var menu = item switch
+        {
+            Tab tab => TabMenu(tab), GroupRow heading => GroupMenu(heading.Group),
+            PinLine { Kind: PinLineKind.Pin, Tab: { } pin } => TabMenu(pin), PinLine { Kind: PinLineKind.Folder, Folder: { } folder } => FolderMenu(folder), PinLine { Kind: PinLineKind.Post, Post: { } post } => PostMenu(post),
+            null when ReferenceEquals(sender, Row) || ReferenceEquals(sender, PinRows) => ColumnMenu(),
+            _ => null
+        };
         if (menu is null) return;
         menu.ShowAt(element, e.GetPosition(element));
         e.Handled = true;
@@ -31,6 +37,7 @@ public sealed partial class MainWindow
         void Item(string text, Action action, bool enabled = true) { var i = new MenuFlyoutItem { Text = text, IsEnabled = enabled }; i.Click += (_, _) => action(); menu.Items.Add(i); }
         Item(tab.Pinned ? "Unpin" : "Pin", () => { if (tab.Pinned) _browser.Unpin(tab); else _browser.Pin(tab); }, !tab.Private);
         Item("Name…", () => _ = NameTab(tab));
+        PinItems(menu, tab);
         if (!tab.Pinned)
         {
             if (tab.GroupId is null)

@@ -18,7 +18,9 @@
             <ColumnDefinition x:Name="SideDef" Width="0" />
         </Grid.ColumnDefinitions>
 
-        <!-- The title bar: empty, draggable. In strip mode the tabs sit in it, left of the drag space. -->
+        <!-- The title bar, all of it draggable. In strip mode the tabs sit in it, left of the drag space; they and the
+             buttons beside them are cut out of it (MainWindow.TitleBar), and the strip is never wider than the bar
+             leaves it, so past that it scrolls. -->
         <Grid x:Name="TopBar" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="StripDef" Width="Auto" />
@@ -28,7 +30,8 @@
             </Grid.ColumnDefinitions>
             <ListView x:Name="Strip" Grid.Column="0" Visibility="Collapsed" SelectionMode="Single" Height="36" Margin="8,2,0,2"
                       CanReorderItems="True" AllowDrop="True" CanDragItems="True" ScrollViewer.HorizontalScrollMode="Enabled"
-                      ScrollViewer.HorizontalScrollBarVisibility="Hidden" ScrollViewer.VerticalScrollMode="Disabled">
+                      ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollMode="Disabled"
+                      ScrollViewer.VerticalScrollBarVisibility="Disabled">
                 <ListView.ItemsPanel>
                     <ItemsPanelTemplate><ItemsStackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                 </ListView.ItemsPanel>
@@ -78,7 +81,8 @@
                 </Grid>
             </Border>
             <!-- The pins: squares wearing the site's icon or a letter, the same in every window. -->
-            <GridView x:Name="PinGrid" Grid.Row="1" SelectionMode="Single" Visibility="Collapsed" Padding="0">
+            <StackPanel Grid.Row="1">
+            <GridView x:Name="PinGrid" SelectionMode="Single" Visibility="Collapsed" Padding="0">
                 <GridView.ItemTemplate>
                     <DataTemplate x:DataType="core:Tab">
                         <Grid Width="48" Height="40" CornerRadius="6" ToolTipService.ToolTip="{x:Bind Shown, Mode=OneWay}">
@@ -88,6 +92,41 @@
                     </DataTemplate>
                 </GridView.ItemTemplate>
             </GridView>
+            <!-- The pinned rows (Pinned rows on): pins kept as rows under the squares, in their folders, live folders' posts among them. -->
+            <ListView x:Name="PinRows" SelectionMode="Single" Visibility="Collapsed" Padding="0,0,0,4">
+                <ListView.ItemTemplateSelector>
+                    <local:PinLineTemplates>
+                        <local:PinLineTemplates.Pin>
+                            <DataTemplate x:DataType="local:PinLine">
+                                <Grid Height="34" ColumnSpacing="8" Margin="{x:Bind Indent, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Tab.Shown, Mode=OneWay}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Image Width="16" Height="16" Source="{x:Bind local:Icons.Of(Tab.Icon), Mode=OneWay}" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Tab.Shown, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </local:PinLineTemplates.Pin>
+                        <local:PinLineTemplates.Folder>
+                            <DataTemplate x:DataType="local:PinLine">
+                                <Grid Height="30" ColumnSpacing="8" Margin="{x:Bind Indent, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Tip, Mode=OneWay}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="{x:Bind Glyph, Mode=OneWay}" FontSize="11" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Title, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </local:PinLineTemplates.Folder>
+                        <local:PinLineTemplates.Post>
+                            <DataTemplate x:DataType="local:PinLine">
+                                <Grid Height="30" ColumnSpacing="8" Margin="{x:Bind Indent, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Tip, Mode=OneWay}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="11" Opacity="0.7" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" FontSize="13" />
+                                </Grid>
+                            </DataTemplate>
+                        </local:PinLineTemplates.Post>
+                    </local:PinLineTemplates>
+                </ListView.ItemTemplateSelector>
+            </ListView>
+            </StackPanel>
             <ListView x:Name="Row" Grid.Row="2" SelectionMode="Single" CanReorderItems="True" AllowDrop="True" CanDragItems="True">
                 <ListView.ItemTemplateSelector>
                     <local:RowTemplates>
@@ -249,7 +288,7 @@
                     <Grid Padding="12,0,4,0" ColumnSpacing="4">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <TextBlock x:Name="PeekSite" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Opacity="0.8" />
-                        <Button Grid.Column="1" Content="Open as tab" Click="OnPeekKeep" />
+                        <Button Grid.Column="1" Content="Open as tab" Click="OnPeekKeep" ToolTipService.ToolTip="Open as a tab (Ctrl+O)" />
                         <Button Grid.Column="2" Content="&#xE711;" FontFamily="Segoe Fluent Icons" Background="Transparent" BorderThickness="0" Click="OnPeekClose" />
                     </Grid>
                     <Grid x:Name="PeekStage" Grid.Row="1" />

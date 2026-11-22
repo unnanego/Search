@@ -118,15 +118,34 @@ public sealed class Browser : Observable
         tab.Letter = Pins.Monogram(tab.Url, tab.Title);
         tab.GroupId = null;
         Unsplit(tab);
-        var last = Tabs.Where(t => t.Pinned && t != tab).Select(Tabs.IndexOf).DefaultIfEmpty(-1).Max();
-        Tabs.Move(Tabs.IndexOf(tab), Math.Min(last + 1, Tabs.Count - 1));
+        tab.Listed = false;
+        tab.Folder = null;
+        // A new pin is a square, after the other squares and ahead of the pinned rows.
+        var last = Tabs.Where(t => t.Pinned && !t.Listed && t != tab).Select(Tabs.IndexOf).DefaultIfEmpty(-1).Max();
+        var from = Tabs.IndexOf(tab);
+        Tabs.Move(from, Math.Min(last + (from > last ? 1 : 0), Tabs.Count - 1));
+        RowShaped();
+    }
+
+    /// Show as Row / Show as Square: the pin keeps its letter, page and home, and goes to the end of the squares or
+    /// the rows. A square is in no folder.
+    public void SetListed(Tab tab, bool listed)
+    {
+        if (!tab.Pinned || tab.Listed == listed) return;
+        tab.Listed = listed;
+        if (!listed) tab.Folder = null;
+        var others = Tabs.Where(t => t != tab && t.Pinned).ToList();
+        var at = listed ? others.Count : others.Count(t => !t.Listed);
+        var place = at == 0 ? 0 : Tabs.IndexOf(others[at - 1]) + 1;
+        var from = Tabs.IndexOf(tab);
+        Tabs.Move(from, Math.Min(from < place ? place - 1 : place, Tabs.Count - 1));
         RowShaped();
     }
 
     public void Unpin(Tab tab)
     {
         if (!tab.Pinned) return;
-        (tab.PinId, tab.Home, tab.Letter) = (null, null, null);
+        (tab.PinId, tab.Home, tab.Letter, tab.Listed, tab.Folder) = (null, null, null, false, null);
         var after = Tabs.Where(t => t.Pinned).Select(Tabs.IndexOf).DefaultIfEmpty(-1).Max();
         Tabs.Move(Tabs.IndexOf(tab), Math.Min(after + 1, Tabs.Count - 1));
         RowShaped();
