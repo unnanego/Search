@@ -75,16 +75,29 @@ public sealed partial class MainWindow
                 if (FolderId(request["deletefolder"]) is { } deleting) DeleteFolder(deleting);
                 if (request["livefolder"] is JsonObject live) await NewLiveFolder(FolderId(live["parent"]), live["url"]?.GetValue<string>() ?? "");
                 if (FolderId(request["refresh"]) is { } refreshing && App.Live is { } liveFolders) { await liveFolders.Refresh(refreshing, _space); _row.Sync(); }
+                // Let go of in the pinned rows as a drag would be: a pin ("pin": tab) or a folder ("folder") over line "on", in its "zone".
+                string? dropCaption = null;
+                if (request["drop"] is JsonObject dropping && (dropping["pin"]?.GetValue<string>() is { } dropPin && Find(dropPin) is { } dropTab ? "pin:" + dropTab.Id : FolderId(dropping["folder"]) is { } dropFolder ? "folder:" + dropFolder : null) is { } carried
+                    && PinDropOn(carried, dropping["on"]?.GetValue<int>() ?? 0, Enum.TryParse<DropZone>(dropping["zone"]?.GetValue<string>(), ignoreCase: true, out var dropZone) ? dropZone : DropZone.Before) is { } drop) { dropCaption = drop.Caption; drop.Apply(); }
+                // The squares put in this order, as dragging them in the grid does.
+                if (request["squares"] is JsonArray squareOrder)
+                {
+                    for (var i = 0; i < squareOrder.Count; i++) if (Find(squareOrder[i]?.GetValue<string>() ?? "") is { } square && _row.Pins.IndexOf(square) is var was and >= 0 && was != i && i < _row.Pins.Count) _row.Pins.Move(was, i);
+                    SquaresReordered();
+                }
                 if (request["post"] is JsonObject posting && FolderId(posting["folder"]) is { } postFolder && SpaceFolders.FirstOrDefault(f => f.Id == postFolder)?.Items is { } posts && posting["index"]?.GetValue<int>() is { } postAt && postAt < posts.Count) OpenPost(posts[postAt]);
                 return new JsonObject
                 {
-                    ["rows"] = _prefs.ShowsPinRows, ["folders"] = _prefs.ShowsPinFolders,
+                    ["rows"] = _prefs.ShowsPinRows, ["folders"] = _prefs.ShowsPinFolders, ["dropped"] = dropCaption,
                     ["squares"] = new JsonArray(_row.Pins.Select(t => (JsonNode)JsonValue.Create(t.ShortId)!).ToArray()),
                     ["lines"] = new JsonArray(_row.PinRows.Select(l => (JsonNode)new JsonObject
                     {
                         ["kind"] = l.Kind.ToString().ToLowerInvariant(), ["id"] = SwiftJson.Uuid(l.Id), ["title"] = l.Title, ["depth"] = l.Depth, ["tab"] = l.Tab?.ShortId,
-                        ["live"] = l.Folder?.IsLive, ["collapsed"] = l.Folder?.Collapsed, ["tip"] = l.Tip, ["url"] = l.Post?.Link, ["selected"] = ReferenceEquals(PinRows.SelectedItem, l)
-                    }).ToArray())
+                        ["live"] = l.Folder?.IsLive, ["collapsed"] = l.Folder?.Collapsed, ["tip"] = l.Tip, ["url"] = l.Post?.Link, ["selected"] = ReferenceEquals(PinRows.SelectedItem, l),
+                        ["rect"] = Flag("rects") ? Where(PinRows.ContainerFromItem(l)) : null
+                    }).ToArray()),
+                    // Where each line and square is drawn, in the window's client area, in pixels: for a test's real drags.
+                    ["squareRects"] = Flag("rects") ? new JsonArray(_row.Pins.Select(t => (JsonNode?)Where(PinGrid.ContainerFromItem(t))).ToArray()) : null
                 };
             // The launcher (Launcher.cs), as Settings and a person work it: switched on or off ("on"), its key ("key", or
             // "none"), "little", Settings listening for a key ("recording"), then the key pressed ("fire"), letters typed,
@@ -341,6 +354,10 @@ public sealed partial class MainWindow
             case "pin" when Store.Testing:
                 if (Flag("off")) _browser.Unpin(found); else _browser.Pin(found);
                 return Describe(found);
+            // Beside another tab ("with"), as Alt+click puts it.
+            case "split" when Store.Testing:
+                if (Find(Text("with") ?? "") is { } beside) _browser.Split(found, beside);
+                return Describe(found);
             case "group" when Store.Testing:
                 if (Flag("off")) _browser.Ungroup(found);
                 else _browser.Group(found, _browser.Groups.FirstOrDefault(g => g.Name == Text("name")), Text("name") ?? "");
@@ -360,10 +377,18 @@ public sealed partial class MainWindow
     /// By any prefix of its id, as the bench names tabs. Outside a test run only the bench's own.
     private Tab? Find(string id) => (_peek is { } peek && peek.ShortId.StartsWith(id, StringComparison.OrdinalIgnoreCase) && Store.Testing ? peek : null) ?? _browser.Tabs.FirstOrDefault(t => !t.Agent && (t.Bench || Store.Testing) && t.Id.ToString("N").StartsWith(id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
 
+    private JsonArray? Where(DependencyObject? container)
+    {
+        if (container is not FrameworkElement { ActualWidth: > 0 } element || Root.XamlRoot is not { } root) return null;
+        var at = element.TransformToVisual(null).TransformPoint(default);
+        var scale = root.RasterizationScale;
+        return new JsonArray(at.X * scale, at.Y * scale, element.ActualWidth * scale, element.ActualHeight * scale);
+    }
+
     private JsonObject Describe(Tab tab) => new()
     {
         ["id"] = tab.ShortId, ["url"] = tab.Url?.AbsoluteUri, ["title"] = tab.Title, ["name"] = tab.Name, ["loading"] = tab.Loading,
-        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? "", ["pinned"] = tab.Pinned, ["letter"] = tab.Letter, ["group"] = _browser.Groups.FirstOrDefault(g => g.Id == tab.GroupId)?.Name, ["heard"] = _pages.Heard.GetValueOrDefault(tab)
+        ["bench"] = tab.Bench, ["private"] = tab.Private, ["active"] = tab == _browser.Selected, ["asleep"] = !tab.Live, ["icon"] = tab.Icon ?? "", ["pinned"] = tab.Pinned, ["letter"] = tab.Letter, ["listed"] = tab.Pinned && tab.Listed, ["split"] = _browser.SplitOf(tab)?.Tabs[0].ShortId, ["pinnedSplit"] = _browser.PinnedPair(tab) is not null, ["group"] = _browser.Groups.FirstOrDefault(g => g.Id == tab.GroupId)?.Name, ["heard"] = _pages.Heard.GetValueOrDefault(tab)
     };
 
     /// A picture of the page, through Chromium's own capture, which works whether or not the tab is in front.

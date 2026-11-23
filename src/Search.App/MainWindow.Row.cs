@@ -35,7 +35,7 @@ public sealed partial class MainWindow
     {
         var menu = new MenuFlyout();
         void Item(string text, Action action, bool enabled = true) { var i = new MenuFlyoutItem { Text = text, IsEnabled = enabled }; i.Click += (_, _) => action(); menu.Items.Add(i); }
-        Item(tab.Pinned ? "Unpin" : "Pin", () => { if (tab.Pinned) _browser.Unpin(tab); else _browser.Pin(tab); }, !tab.Private);
+        Item(tab.Pinned ? "Unpin" : _browser.PinnableSplit(tab) is not null ? "Pin split view" : "Pin", () => { if (tab.Pinned) _browser.Unpin(tab); else _browser.Pin(tab); }, !tab.Private);
         Item("Name…", () => _ = NameTab(tab));
         PinItems(menu, tab);
         if (!tab.Pinned)

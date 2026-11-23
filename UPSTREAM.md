@@ -10,7 +10,7 @@ None of the 73 commits touched `LiveFolders.swift`, `Snap.swift`, `Launcher.swif
 
 ## Port
 
-Smallest and safest first. Ported in Phase 6, all but the last: `3df5362` keeps a pin's `pair` in pins.json so a file the Mac wrote doesn't lose it, but a split isn't pinned as a split yet. `e5620f4`'s swipe half and `719f3a7`'s Move Left / Move Right across profiles wait, as noted.
+Smallest and safest first. Ported in Phase 6, all but the last, `3df5362`, which came after it (WINDOWS-PLAN.md, After Phase 6): a split is pinned as a split, its pins naming one `pair` in pins.json. Its drag halves are Windows' own: a split pinned whole is carried whole among the rows; a tab dragged onto the pins to pin it isn't built yet. `e5620f4`'s swipe half and `719f3a7`'s Move Left / Move Right across profiles wait, as noted.
 
 | Commit | Subject | Windows file(s): change |
 |---|---|---|

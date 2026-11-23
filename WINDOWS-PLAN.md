@@ -313,11 +313,19 @@ What Phase 6 taught us:
 
 Not done:
 - **The AI add-on and translation** (above).
-- **Pinning a split as a split** (`3df5362`): a pin's `pair` is kept in pins.json so a Mac's file doesn't lose it, but a split isn't pinned as one here.
-- **Dragging a pin into a folder**, and dragging folders: the menus do it for now.
+- ~~Pinning a split as a split~~ and ~~dragging pins and folders~~: done after Phase 6 (below).
 - **Profiles in one window, the same tabs in every window, per-window folding, and deleting a removed space's or profile's data from disk**, still as Phase 5 left them.
 - **Not looked at on screen:** the launcher's panel, the capture layer, the pinned rows and the new Settings entries were checked through the bench and a real key press, not by eye. The save-where picker for an unwritable downloads folder ran only with its answer given in advance.
-- **A crash in `Pages.Adopt`** (an access violation setting a new window's `NewWindow`), seen while porting when an extension called `chrome.tabs.create` from its button, and three times during one full run of the suites, though not in the next. Every suite passes; the cause isn't found yet.
+- ~~A crash in `Pages.Adopt`~~: found and fixed after Phase 6 (below).
+
+*After Phase 6 (2026-11-22):* the open items Phase 6 left that are Windows' own to finish.
+- **The `Pages.Adopt` crash, and new tabs that never loaded.** WebView2 hands every web view a `CoreWebView2Profile` object of its own, so Shield's "once per profile" memory, keyed by the object, never matched: every new tab reinstalled Shield into a profile the other tabs share. Two tabs opening together (an extension's `chrome.tabs.create`, a page's `window.open`) removed each other's copy mid-install, and one waited for ever, a tab with no address; 80 new windows opened fast made 2 tabs. The crash setting `NewWindow` came while that went on. Shield now keys profiles by `ProfilePath`, as ExtensionHost already did, and one profile's installs wait their turn: 120 of 120 adopted, and two full runs of every suite with no crash.
+- **A split pinned as a split** (`3df5362`; Settings › Pinned rows): Pin on a page of a split (its menu says Pin split view) pins every page, as rows, naming one pair in pins.json; they stay one split, in every window and after a restart. Two pins put side by side become one. No Show as Square, no folder; Unpin lets both out, still a split; closing one page closes both, as the Mac's Delete does (Ctrl+W on a pin closes it here, as before). `test/pin_split.py`, `PinSplitTests`.
+- **Dragging in the column** (MainWindow.PinDrag.cs, PinDrop.cs): squares reorder; a pinned row or a folder's heading goes before a line, after it, or into a folder (the middle half of a heading), as Arc's sidebar takes them; a square let go among the rows becomes one there, a row onto the squares a square. A split pinned whole goes whole and never into a folder. `test/pin_drag.py` checks each drop through the bench and, with `--mouse`, real drags by the pointer. Not yet: a loose tab dragged onto the pins to pin it, or a pin dragged out to unpin it.
+- **Unpin put a pin one place too far** when it wasn't the last pin (after the first loose tab, not before it). Fixed with the above.
+- **A Core test that failed about half the time** (`AnySpaceCanGoTheFirstIncludedAndTheNextBecomesTheHome`): it and ImportTakeTests both remove the first space, whose session is the one shared `session.json`, and xUnit ran them side by side. They're one collection now.
+- **Checked:** phases 1–6, `pin_split.py` and `pin_drag.py --mouse` all pass; Core and Engine have 1,209 unit tests; the Release build is clean.
+- **phase6 needs the desktop:** its launcher checks take the foreground with a real key, so it stops, before sending any key, when Windows won't let Search come to the front.
 
 The heaviest phase is now 3 (the most UI). Spike 1 shrank phase 4 to UI, the `tabs`/`windows` shim, and testing real extensions.
 

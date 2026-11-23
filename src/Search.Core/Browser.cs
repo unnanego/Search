@@ -109,14 +109,14 @@ public sealed class Browser : Observable
         Selected = row[((at + by) % row.Count + row.Count) % row.Count];
     }
 
-    /// Pinned: kept at the top of the row, with the page it is now as its home and a letter from the site.
+    /// Pinned: kept at the top of the row, with the page it is now as its home and a letter from the site. A page in a
+    /// split brings the rest of it along when every page of it can be a pin: pinned together, always as rows, and still
+    /// one split (Browser.pin). Otherwise it leaves the split and is pinned alone.
     public void Pin(Tab tab)
     {
         if (tab.Pinned || tab.Bench || tab.Private) return;
-        tab.PinId = Guid.NewGuid();
-        tab.Home = tab.Url;
-        tab.Letter = Pins.Monogram(tab.Url, tab.Title);
-        tab.GroupId = null;
+        if (PinnableSplit(tab) is { } members) { PinTogether(members, Guid.NewGuid()); return; }
+        MakePin(tab);
         Unsplit(tab);
         tab.Listed = false;
         tab.Folder = null;
@@ -127,11 +127,54 @@ public sealed class Browser : Observable
         RowShaped();
     }
 
+    private static void MakePin(Tab tab) { tab.PinId = Guid.NewGuid(); tab.Home = tab.Url; tab.Letter = Pins.Monogram(tab.Url, tab.Title); tab.GroupId = null; }
+
+    /// A split pinned whole: each page a pinned row, after the other rows and in the split's order, in no folder, all
+    /// naming one pair, which pins.json keeps so every window shows them as one split.
+    private void PinTogether(IReadOnlyList<Tab> members, Guid pair)
+    {
+        foreach (var member in members)
+        {
+            if (!member.Pinned) MakePin(member);
+            (member.Listed, member.Folder, member.PinPair) = (true, null, pair);
+            var last = Tabs.Where(t => t.Pinned && t != member).Select(Tabs.IndexOf).DefaultIfEmpty(-1).Max();
+            var from = Tabs.IndexOf(member);
+            Tabs.Move(from, Math.Min(last + (from > last ? 1 : 0), Tabs.Count - 1));
+        }
+        SplitsChanged?.Invoke();
+        RowShaped();
+    }
+
+    /// The pages of the tab's split, when every one of them could be a pin: web pages, none private, none pinned yet.
+    public IReadOnlyList<Tab>? PinnableSplit(Tab tab) => SplitOf(tab) is { } split && split.Tabs.All(t => !t.Pinned && !t.Bench && !t.Private && t.Url is { Scheme: "http" or "https" }) ? split.Tabs : null;
+
+    /// The split a pin is in with other pins alone: a split pinned whole.
+    public SplitPages? PinnedPair(Tab tab) => tab.Pinned && SplitOf(tab) is { } split && split.Tabs.All(t => t.Pinned) ? split : null;
+
+    /// The splits pinned whole as pins.json has them (PinDef.Pair), for a row whose pins were just matched to it: pins
+    /// naming one pair, two to four of them, next to each other and in no other split, made one; and a split of pins
+    /// alone that pins.json no longer holds together let go. So a split pinned in one window is one in the others.
+    public void KeepPinnedPairs()
+    {
+        var changed = Splits.RemoveAll(s => s.Tabs.All(t => t.Pinned) && (s.Tabs[0].PinPair is not { } id || s.Tabs.Any(t => t.PinPair != id))) > 0;
+        foreach (var members in Tabs.Where(t => t is { Pinned: true, PinPair: not null } && SplitOf(t) is null).GroupBy(t => t.PinPair).Select(g => g.OrderBy(Tabs.IndexOf).ToList()))
+        {
+            var at = Tabs.IndexOf(members[0]);
+            if (members.Count is < 2 or > SplitPages.Most || members.Where((t, i) => Tabs.IndexOf(t) != at + i).Any()) continue;
+            var split = new SplitPages(SplitAxis.Horizontal);
+            split.Tabs.AddRange(members);
+            split.Even();
+            Splits.Add(split);
+            changed = true;
+        }
+        if (changed) SplitsChanged?.Invoke();
+    }
+
     /// Show as Row / Show as Square: the pin keeps its letter, page and home, and goes to the end of the squares or
-    /// the rows. A square is in no folder.
+    /// the rows. A square is in no folder. A split pinned whole stays rows.
     public void SetListed(Tab tab, bool listed)
     {
-        if (!tab.Pinned || tab.Listed == listed) return;
+        if (!tab.Pinned || tab.Listed == listed || PinnedPair(tab) is not null) return;
         tab.Listed = listed;
         if (!listed) tab.Folder = null;
         var others = Tabs.Where(t => t != tab && t.Pinned).ToList();
@@ -142,12 +185,16 @@ public sealed class Browser : Observable
         RowShaped();
     }
 
+    /// Out of the pins, to the head of the loose tabs. A split pinned whole comes out whole, still a split, its pages
+    /// in their order.
     public void Unpin(Tab tab)
     {
         if (!tab.Pinned) return;
-        (tab.PinId, tab.Home, tab.Letter, tab.Listed, tab.Folder) = (null, null, null, false, null);
-        var after = Tabs.Where(t => t.Pinned).Select(Tabs.IndexOf).DefaultIfEmpty(-1).Max();
-        Tabs.Move(Tabs.IndexOf(tab), Math.Min(after + 1, Tabs.Count - 1));
+        var members = PinnedPair(tab)?.Tabs.ToList() ?? [tab];
+        foreach (var member in members) (member.PinId, member.Home, member.Letter, member.Listed, member.Folder, member.PinPair) = (null, null, null, false, null, null);
+        // The pins are the head of the row.
+        var head = Tabs.Count(t => t.Pinned);
+        for (var k = 0; k < members.Count; k++) { var to = Math.Min(head + k, Tabs.Count - 1); if (Tabs.IndexOf(members[k]) is var from and >= 0 && from != to) Tabs.Move(from, to); }
         RowShaped();
     }
 
@@ -187,6 +234,14 @@ public sealed class Browser : Observable
     {
         if (with == other || with.Bench || other.Bench) return null;
         Unsplit(other);
+        // Two pins put side by side stay pins, as a split pinned whole: rows, in no folder, naming one pair.
+        if (with.Pinned && other.Pinned && (SplitOf(with) is null || PinnedPair(with) is { Tabs.Count: < SplitPages.Most }))
+        {
+            var pair = PinnedPair(with) is not null && with.PinPair is { } kept ? kept : Guid.NewGuid();
+            SetListed(other, true);
+            SetListed(with, true);
+            foreach (var pin in new[] { with, other }) (pin.Folder, pin.PinPair) = (null, pair);
+        }
         var split = SplitOf(with);
         if (split is null) { split = new SplitPages(axis); split.Tabs.Add(with); Splits.Add(split); }
         else if (split.Tabs.Count >= SplitPages.Most) return null;

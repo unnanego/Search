@@ -8,7 +8,7 @@ namespace Search.App;
 // pins kept as rows under the squares (Settings › Pinned rows), in folders that fold and open (Folders in pinned rows),
 // and live folders filled from a web feed, whose posts open as a bookmark would, in a new tab, never as a pin. Which
 // folder a pin is in is the pin's own, in pins.json; the folders are pin-folders.json's, the same in every window.
-// A pin goes into a folder from its menu (Move to Folder); dragging one in is still to come.
+// A pin goes into a folder from its menu (Move to Folder) or carried there (MainWindow.PinDrag.cs).
 public sealed partial class MainWindow
 {
     private PinFolders FolderStore => App.Shared.Folders;
@@ -22,6 +22,7 @@ public sealed partial class MainWindow
         _row.PinRows.CollectionChanged += (_, _) => PinRows.Visibility = _row.PinRows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         PinRows.SelectionChanged += OnPinRowChosen;
         PinRows.RightTapped += OnRowMenu;
+        WirePinDrag();
         // Another window, or a live folder's fetch, changed this space's folders.
         Hook<Action<PinsChange>>(h => FolderStore.Changed += h, h => FolderStore.Changed -= h, change =>
         {
@@ -76,6 +77,7 @@ public sealed partial class MainWindow
     /// New Folder: inside `parent`, or holding `pin` (which goes in it), named as asked.
     private async Task NewFolder(Guid? parent = null, Tab? pin = null, string? name = null)
     {
+        if (pin is not null && _browser.PinnedPair(pin) is not null) return;
         name ??= await Ask("New folder", PinFolders.DefaultName, "Make", "Folder name");
         if (name is null || PinFolders.Made(SpaceFolders, name, parent, pin is null ? null : Facts(pin)) is not { } made) return;
         SetFolders(made.Folders);
@@ -87,7 +89,7 @@ public sealed partial class MainWindow
     /// A pinned row into a folder, or out of every one (null).
     private void MovePin(Tab pin, Guid? folder)
     {
-        if (!pin.Listed || pin.Folder == folder || (folder is { } id && SpaceFolders.FirstOrDefault(f => f.Id == id) is not { IsLive: false })) return;
+        if (!pin.Listed || pin.Folder == folder || _browser.PinnedPair(pin) is not null || (folder is { } id && SpaceFolders.FirstOrDefault(f => f.Id == id) is not { IsLive: false })) return;
         pin.Folder = folder;
         PinsEdited();
     }
@@ -177,7 +179,8 @@ public sealed partial class MainWindow
     /// The pin's own entries in its menu, while pinned rows show: a row or a square, and, with folders, which one.
     private void PinItems(MenuFlyout menu, Tab tab)
     {
-        if (!tab.Pinned || !_prefs.ShowsPinRows) return;
+        // A split pinned whole is always rows, and in no folder.
+        if (!tab.Pinned || !_prefs.ShowsPinRows || _browser.PinnedPair(tab) is not null) return;
         var listed = new MenuFlyoutItem { Text = tab.Listed ? "Show as Square" : "Show as Row" };
         listed.Click += (_, _) => { _browser.SetListed(tab, !tab.Listed); PinsEdited(); };
         menu.Items.Add(listed);

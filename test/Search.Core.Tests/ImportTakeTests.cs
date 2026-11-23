@@ -3,6 +3,8 @@ using Search.Core;
 
 namespace Search.Core.Tests;
 
+// One at a time with the other tests that remove the first space: its session is the one shared session.json.
+[Collection("first space")]
 public class ImportTakeTests
 {
     public ImportTakeTests() => TempStore.Ready();

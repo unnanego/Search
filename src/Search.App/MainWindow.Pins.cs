@@ -21,9 +21,9 @@ public sealed partial class MainWindow
     /// A row as last written, with the space's pins as they are now: what Restore reads.
     private Session.Shape WithPins(Session.Shape shape, Guid space) => Pins.InSession(shape, Pinned.Defs(space));
 
-    private static PinnedTab Facts(Tab tab) => new(tab.Id)
+    private PinnedTab Facts(Tab tab) => new(tab.Id)
     {
-        Pin = tab.Pinned ? tab.Letter ?? Pins.Monogram(tab.Url, tab.Title) : null, PinId = tab.PinId, Listed = tab.Pinned && tab.Listed, Folder = tab.Pinned && tab.Listed ? tab.Folder : null, Pair = tab.Pinned ? tab.PinPair : null, Home = tab.Home?.AbsoluteUri, Url = tab.Url?.AbsoluteUri, Title = tab.Title, Name = tab.Name, Private = tab.Private
+        Pin = tab.Pinned ? tab.Letter ?? Pins.Monogram(tab.Url, tab.Title) : null, PinId = tab.PinId, Listed = tab.Pinned && tab.Listed, Folder = tab.Pinned && tab.Listed ? tab.Folder : null, Pair = _browser.PinnedPair(tab) is not null ? tab.PinPair : null, Home = tab.Home?.AbsoluteUri, Url = tab.Url?.AbsoluteUri, Title = tab.Title, Name = tab.Name, Private = tab.Private
     };
 
     /// The row changed: its pins, as they now are, told to the other windows (nothing is said when they're the same).
@@ -55,6 +55,7 @@ public sealed partial class MainWindow
                 if (facts.Fresh) { if (tab.Home is { } page) tab.Url = page; _browser.Insert(tab, Math.Min(at, _browser.Tabs.Count)); }
                 else if (_browser.Tabs.IndexOf(tab) is var from and >= 0 && from != at && at < _browser.Tabs.Count) _browser.Move(tab, at);
             }
+            _browser.KeepPinnedPairs();
             _row.Sync();
         }
         finally { _following = false; }

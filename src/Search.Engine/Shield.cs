@@ -55,7 +55,9 @@ public static class Shield
     private static readonly string[] _youtubePaths = ["/api/stats/ads", "/pagead/", "/ptracking", "/get_midroll_info", "/youtubei/v1/player/ad_break", "/pcs/activeview"];
     public static readonly string[] YouTubeHosts = ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com", "www.youtube-nocookie.com"];
 
-    private static readonly Dictionary<CoreWebView2Profile, Task> _protected = new();
+    /// Each profile's install, by its path: WebView2 hands every web view a profile object of its own, so the object
+    /// never matches the next tab's and the extension would be put in again for every tab.
+    private static readonly Dictionary<string, Task> _protected = new();
     private static string? _written;
 
     public static string Folder => Store.File("Shield");
@@ -65,23 +67,26 @@ public static class Shield
     public static Task Protect(CoreWebView2Profile profile, bool on, IReadOnlyCollection<string> paused)
     {
         Write(paused);
-        lock (_protected) return _protected.TryGetValue(profile, out var done) ? done : _protected[profile] = Install(profile, on);
+        lock (_protected) return _protected.TryGetValue(profile.ProfilePath, out var done) ? done : _protected[profile.ProfilePath] = Install(profile, on, Task.CompletedTask);
     }
 
     /// Shield switched on or off, or a site paused or not: every profile given the new copy.
     public static async Task Update(IEnumerable<CoreWebView2Profile> profiles, bool on, IReadOnlyCollection<string> paused)
     {
         Write(paused);
-        foreach (var profile in profiles.Distinct().ToList())
+        foreach (var profile in profiles.DistinctBy(p => p.ProfilePath).ToList())
         {
             Task install;
-            lock (_protected) install = _protected[profile] = Install(profile, on);
+            lock (_protected) install = _protected[profile.ProfilePath] = Install(profile, on, _protected.GetValueOrDefault(profile.ProfilePath) ?? Task.CompletedTask);
             await install;
         }
     }
 
-    private static async Task Install(CoreWebView2Profile profile, bool on)
+    /// After the profile's last install: two at once take each other's copy out, and one of them never finishes.
+    private static async Task Install(CoreWebView2Profile profile, bool on, Task before)
     {
+        // How the last one went is its own caller's to hear.
+        try { await before; } catch (Exception) { }
         foreach (var installed in await profile.GetBrowserExtensionsAsync()) if (installed.Name == ExtensionName) await installed.RemoveAsync();
         var added = await profile.AddBrowserExtensionAsync(Folder);
         if (!on) await added.EnableAsync(false);

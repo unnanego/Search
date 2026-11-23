@@ -4,6 +4,8 @@ using Search.Core;
 
 namespace Search.Core.Tests;
 
+// One at a time with the other tests that remove the first space: its session is the one shared session.json.
+[Collection("first space")]
 public class SpacesTests
 {
     private const string First = "00000000-0000-0000-0000-000000000001";

@@ -33,7 +33,8 @@ public sealed partial class MainWindow
             if (entry.Pin is { } letter) { tab.PinId = entry.PinId ?? Guid.NewGuid(); tab.Letter = letter; tab.Home = Uri.TryCreate(entry.Home ?? entry.Url, UriKind.Absolute, out var home) ? home : null; tab.Listed = entry.Listed == true; if (defs.GetValueOrDefault(tab.PinId.Value) is { } def) { tab.Folder = def.Folder; tab.PinPair = def.Pair; } }
             else if (entry.GroupId is { } group && shape.Groups?.Any(g => g.Id == group) == true) tab.GroupId = group;
             if (Uri.TryCreate(entry.Url, UriKind.Absolute, out var url)) tab.Url = url;
-            _browser.Insert(tab, _browser.Ordinary.Count());        }
+            _browser.Insert(tab, _browser.Ordinary.Count());
+        }
         if (shape.Groups is { } groups) foreach (var group in groups.Where(g => _browser.Ordinary.Any(t => t.GroupId == g.Id) && _browser.Groups.All(h => h.Id != g.Id))) _browser.Groups.Add(group);
         _row.Sync();
         var row = _browser.Ordinary.ToList();
@@ -46,6 +47,8 @@ public sealed partial class MainWindow
             pages.Sizes.AddRange(split.Sizes.Count == pages.Tabs.Count && split.Sizes.All(s => s > 0) ? split.Sizes.Select(s => s / split.Sizes.Sum()) : Enumerable.Repeat(1.0 / pages.Tabs.Count, pages.Tabs.Count));
             _browser.Splits.Add(pages);
         }
+        // A split pinned whole in another window, or before pins.json said so here, stands as one.
+        _browser.KeepPinnedPairs();
         // A fresh start marks no tab in front: an empty one opens beside what was kept.
         if (kept.Tabs.Count > 0 && row.Count > 0 && shape.Active >= 0 && shape.Active < row.Count) _browser.Selected = row[shape.Active];
         else NewTab();

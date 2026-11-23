@@ -210,7 +210,8 @@ public sealed partial class MainWindow : Window
     private void Close(Tab tab)
     {
         _tabClosedAt = DateTimeOffset.UtcNow;
-        _browser.Close(tab);
+        // A split pinned whole closes whole.
+        foreach (var page in _browser.PinnedPair(tab)?.Tabs.ToList() ?? [tab]) _browser.Close(page);
         if (_browser.Ordinary.Any()) return;
         // The last tab closed leaves an empty one, ready for an address, rather than an empty window.
         NewTab();
